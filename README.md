@@ -1,0 +1,90 @@
+# ATM CRM — Backend
+
+NestJS + Prisma + PostgreSQL. This first slice holds the platform every later module uses: Google sign-in by invite, users, roles and permissions, configuration values and pick-lists, and the append-only change log.
+
+## Run it locally
+
+You need Node.js 22 and PostgreSQL 14 or later.
+
+```bash
+npm install
+cp .env.example .env            # then fill it in (see below)
+createdb atm_crm                # or create the database in pgAdmin
+npx prisma migrate dev --name init   # creates the tables from prisma/schema.prisma
+npx prisma db seed              # roles, settings, lists and the first admins
+npm run start:dev               # API on http://localhost:3000/api/v1
+```
+
+Then start the frontend (`../ATM Frontend`, `npm run dev`) and open http://localhost:5173.
+
+### .env essentials
+
+| Key | What to put |
+|---|---|
+| `DATABASE_URL` | Your PostgreSQL connection string |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | From the OAuth client in Google Cloud (below) |
+| `GOOGLE_CALLBACK_URL` | `http://localhost:3000/api/v1/auth/google/callback` (must also be in the client's redirect URIs) |
+| `SEED_ADMIN_EMAILS` | `sephy.mathew@staxlabs.in,tjc@bizinnox.com`. The seed makes each one a **Founder** |
+| `MAIL_TRANSPORT` | `log` prints invite emails in this console and shows the link in the app; `smtp` sends them |
+
+### Google sign-in setup (once)
+
+1. Google Cloud Console → APIs & Services → Credentials → **Create credentials → OAuth client ID**.
+2. Application type **Web application**.
+3. **Authorised JavaScript origins**: `http://localhost:5173`.
+4. **Authorised redirect URIs**: `http://localhost:3000/api/v1/auth/google/callback` (add the live addresses later).
+5. Copy the client ID and secret into `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+6. Optional: `GOOGLE_ALLOWED_DOMAINS=yourcompany.com` lets only company Google accounts in.
+
+## How sign-in works
+
+- **Invite only.** An admin invites an email in Settings → Users. The person gets an email with a link (valid `INVITE_DAYS`, default 7).
+- They open the link and click **Sign in with Google**: the browser goes to Google's sign-in page and comes back to `GOOGLE_CALLBACK_URL`, which checks the account and starts the session. The first sign-in turns the invite into an active account and ties it to that Google account. Google Workspace handles the password and two-step sign-in.
+- Sessions are stored in the database (a random cookie; only its hash is kept), slide for `SESSION_DAYS`, and end at once on sign-out or deactivation.
+- Every request is checked on the server: a valid session, an active person, and the route's permissions.
+
+## Roles and permissions
+
+- Permissions are listed in `src/common/permissions.ts`. Keys are permanent: to drop one, mark it `retired`.
+- Roles are built from permissions in Settings. A person can hold several roles; their permissions add up.
+- Built-in roles: **Founder** (everything), **BD manager**, **Research analyst**, **Admin**. Founders can change anyone's roles and deactivate them.
+- **Lock-out protection:** a change is refused if it would leave no active person able to manage users and roles.
+
+## Data safety
+
+- Nobody and nothing is hard-deleted: people are **deactivated**, roles **archived**, list values **retired**, role grants **revoked** (kept with who and when).
+- Configuration changes add a **new version**; the earlier values stay in the history.
+- `audit_event` is **append-only**: a database trigger refuses UPDATE and DELETE (installed at every start-up, `src/prisma/db-hardening.ts`).
+- Database structure changes only add tables or optional columns, through new Prisma migrations.
+
+## API (all under `/api/v1`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/auth/config`, `/auth/invite/:token` | public |
+| GET | `/auth/google` (to Google) · `/auth/google/callback` (back from Google) | public |
+| GET | `/auth/me` · POST `/auth/logout` | signed in |
+| GET | `/users`, `/users/:id` | settings.view |
+| POST | `/users/invite`, `/users/:id/resend-invite`, `/users/:id/deactivate`, `/users/:id/reactivate` · PATCH `/users/:id` | users.manage |
+| GET | `/roles`, `/roles/:id`, `/roles/permissions` | settings.view |
+| POST | `/roles`, `/roles/:id/archive`, `/roles/:id/restore` · PATCH `/roles/:id` | roles.manage |
+| GET | `/settings/config`, `/settings/config/:key/history`, `/settings/lists` | settings.view |
+| PUT | `/settings/config/:key` · POST `/settings/lists/:key/values`, `/settings/list-values/:id/retire`, `/restore` · PATCH `/settings/list-values/:id` | settings.edit |
+| GET | `/audit`, `/audit/sections` | audit.view |
+| GET | `/health` | public |
+
+Every change (POST, PATCH, PUT) must carry the header `X-ATM-Client: web`; the web app always sends it.
+
+## Project layout
+
+```
+prisma/schema.prisma      tables
+prisma/seed.ts            roles, settings, lists, first admins
+src/common/               permissions catalogue, settings catalogue, guards, decorators
+src/auth/                 Google sign-in, sessions, access (permissions)
+src/users/                invite, edit, deactivate, reactivate
+src/roles/                roles and permissions
+src/settings/             configuration values and pick-lists
+src/audit/                the change log
+src/mail/                 invite emails (log or SMTP)
+```

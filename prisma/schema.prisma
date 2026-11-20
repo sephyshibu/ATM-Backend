@@ -1,0 +1,261 @@
+// ATM CRM: sign-in, users, roles and permissions, settings and the change log.
+//
+// Data safety rules (design v1.1, section 9):
+// - Nothing here is ever hard-deleted by the app. Users are deactivated, roles and list values are archived or
+//   retired, role grants are revoked (kept with who and when), settings values are new versions.
+// - audit_event is append-only: a database trigger refuses UPDATE and DELETE (src/prisma/db-hardening.service.ts).
+// - Structure changes are made by adding tables or optional columns in new migrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  invited
+  active
+  deactivated
+}
+
+// ---------------------------------------------------------------- People and sign-in
+
+model User {
+  id                 String     @id @default(uuid()) @db.Uuid
+  /// Always stored lower-case. The person must sign in with a Google account using this email.
+  email              String     @unique
+  name               String
+  title              String     @default("")
+  status             UserStatus @default(invited)
+  /// Google's stable account id, set at first sign-in. A different Google account for the same email is refused.
+  googleSub          String?    @unique @map("google_sub")
+  invitedAt          DateTime?  @map("invited_at")
+  invitedById        String?    @map("invited_by_id") @db.Uuid
+  /// SHA-256 of the invite link's token: the raw token is only ever in the email.
+  inviteTokenHash    String?    @unique @map("invite_token_hash")
+  inviteExpiresAt    DateTime?  @map("invite_expires_at")
+  activatedAt        DateTime?  @map("activated_at")
+  lastSignInAt       DateTime?  @map("last_sign_in_at")
+  deactivatedAt      DateTime?  @map("deactivated_at")
+  deactivatedById    String?    @map("deactivated_by_id") @db.Uuid
+  deactivationReason String?    @map("deactivation_reason")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+
+  invitedBy     User?      @relation("UserInvitedBy", fields: [invitedById], references: [id])
+  invitees      User[]     @relation("UserInvitedBy")
+  deactivatedBy User?      @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id])
+  deactivated   User[]     @relation("UserDeactivatedBy")
+  roles         UserRole[] @relation("UserRoleUser")
+  rolesGranted  UserRole[] @relation("UserRoleGrantedBy")
+  rolesRevoked  UserRole[] @relation("UserRoleRevokedBy")
+  sessions      Session[]
+
+  @@index([status])
+  @@map("user")
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  /// SHA-256 of the cookie value: a database leak doesn't hand out live sessions.
+  tokenHash  String    @unique @map("token_hash")
+  userId     String    @map("user_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  ip         String?
+  userAgent  String?   @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("session")
+}
+
+// ---------------------------------------------------------------- Roles and permissions
+
+/// The permission catalogue. Kept in step with src/common/permissions.ts at start-up; keys are never removed,
+/// only marked retired, so old role history stays readable.
+model Permission {
+  key         String    @id
+  groupName   String    @map("group_name")
+  label       String
+  description String    @default("")
+  sortOrder   Int       @default(0) @map("sort_order")
+  retiredAt   DateTime? @map("retired_at")
+
+  roles RolePermission[]
+
+  @@map("permission")
+}
+
+model Role {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  description String    @default("")
+  /// Seeded roles: they can be edited but not archived.
+  builtIn     Boolean   @default(false) @map("built_in")
+  /// Grants nothing when APP_ENV=production (the Tester role).
+  testOnly    Boolean   @default(false) @map("test_only")
+  version     Int       @default(1)
+  archivedAt  DateTime? @map("archived_at")
+  archivedById String?  @map("archived_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  updatedById String?   @map("updated_by_id") @db.Uuid
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("role")
+}
+
+model RolePermission {
+  roleId        String @map("role_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionKey], references: [key])
+
+  @@id([roleId, permissionKey])
+  @@map("role_permission")
+}
+
+/// A role held by a person. Taking a role away sets revoked_at; the row stays as history.
+model UserRole {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  roleId      String    @map("role_id") @db.Uuid
+  grantedAt   DateTime  @default(now()) @map("granted_at")
+  grantedById String?   @map("granted_by_id") @db.Uuid
+  revokedAt   DateTime? @map("revoked_at")
+  revokedById String?   @map("revoked_by_id") @db.Uuid
+
+  user      User  @relation("UserRoleUser", fields: [userId], references: [id])
+  role      Role  @relation(fields: [roleId], references: [id])
+  grantedBy User? @relation("UserRoleGrantedBy", fields: [grantedById], references: [id])
+  revokedBy User? @relation("UserRoleRevokedBy", fields: [revokedById], references: [id])
+
+  @@index([userId, revokedAt])
+  @@index([roleId, revokedAt])
+  @@map("user_role")
+}
+
+// ---------------------------------------------------------------- Settings
+
+/// A configuration value the business can change (clocks, quiet period, revenue band...). Defined by the seed.
+model SettingDefinition {
+  key         String  @id
+  groupName   String  @map("group_name")
+  label       String
+  description String  @default("")
+  /// integer | text | month_day | time | boolean
+  type        String
+  unit        String  @default("")
+  min         Int?
+  max         Int?
+  sortOrder   Int     @default(0) @map("sort_order")
+
+  values SettingValue[]
+
+  @@map("setting_definition")
+}
+
+/// Every value a setting has had. The current value is the highest version; rows are never changed.
+model SettingValue {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String
+  version     Int
+  value       Json
+  reason      String   @default("")
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by_id") @db.Uuid
+
+  definition SettingDefinition @relation(fields: [key], references: [key])
+
+  @@unique([key, version])
+  @@map("setting_value")
+}
+
+/// A pick-list the business edits: categories, sub-categories, routing, reason codes.
+model ListDefinition {
+  key           String  @id
+  label         String
+  description   String  @default("")
+  /// A child list (sub-category) hangs each value under a value of its parent list (category).
+  parentListKey String? @map("parent_list_key")
+  sortOrder     Int     @default(0) @map("sort_order")
+
+  values ListValue[]
+
+  @@map("list_definition")
+}
+
+model ListValue {
+  id          String    @id @default(uuid()) @db.Uuid
+  listKey     String    @map("list_key")
+  /// A stable code the rest of the system stores (BE, SKINCARE). Never changes; the label can.
+  code        String
+  label       String
+  description String    @default("")
+  parentId    String?   @map("parent_id") @db.Uuid
+  sortOrder   Int       @default(0) @map("sort_order")
+  retiredAt   DateTime? @map("retired_at")
+  retiredById String?   @map("retired_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  updatedById String?   @map("updated_by_id") @db.Uuid
+
+  list     ListDefinition @relation(fields: [listKey], references: [key])
+  parent   ListValue?     @relation("ListValueParent", fields: [parentId], references: [id])
+  children ListValue[]    @relation("ListValueParent")
+
+  @@unique([listKey, code])
+  @@index([listKey, retiredAt])
+  @@map("list_value")
+}
+
+// ---------------------------------------------------------------- Change log and email
+
+/// The append-only change log: every change and every sign-in. A trigger refuses UPDATE and DELETE.
+model AuditEvent {
+  id          BigInt   @id @default(autoincrement())
+  at          DateTime @default(now())
+  actorId     String?  @map("actor_id") @db.Uuid
+  /// The person's name and email at the time, so the entry reads right even if they change later.
+  actorLabel  String   @map("actor_label")
+  section     String
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id")
+  before      String?
+  after       String?
+  reason      String?
+  ip          String?
+
+  @@index([at])
+  @@index([section])
+  @@index([entityType, entityId])
+  @@map("audit_event")
+}
+
+/// Every email the system sends, kept as a record (and the only copy when MAIL_TRANSPORT=log).
+model EmailOutbox {
+  id        String    @id @default(uuid()) @db.Uuid
+  to        String
+  subject   String
+  bodyText  String    @map("body_text")
+  bodyHtml  String    @map("body_html")
+  status    String    @default("queued")
+  error     String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  sentAt    DateTime? @map("sent_at")
+
+  @@map("email_outbox")
+}
