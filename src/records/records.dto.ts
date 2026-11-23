@@ -12,7 +12,7 @@ export class OrganisationFields {
   @Transform(trim)
   @IsOptional()
   @IsString()
-  @MinLength(1, { message: "Give the company a name." })
+  @MinLength(1, { message: "Give the organisation a name." })
   @MaxLength(200)
   name?: string
 
@@ -40,7 +40,7 @@ export class OrganisationFields {
   @MaxLength(5000)
   notes?: string
 
-  /** The parent group: another company's id; null takes it out of a group. */
+  /** The parent group: another organisation's id; null takes it out of a group. */
   @Transform(emptyToNull)
   @IsOptional()
   @IsUUID()
@@ -62,6 +62,13 @@ export class OrganisationFields {
   @IsString()
   @MaxLength(1000)
   exclusionReason?: string
+
+  /** Codes from the Tags list; the record's tags become exactly these. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  tagCodes?: string[]
 }
 
 /** `name` is required (checked in the service). */
@@ -115,11 +122,18 @@ export class BrandFields {
 
   @Transform(trim) @IsOptional() @IsString() @MaxLength(5000) description?: string
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(300) linkedinUrl?: string | null
+
+  /** Codes from the Tags list; the record's tags become exactly these. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  tagCodes?: string[]
 }
 
 /** `name` and `domain` are required (checked in the service). */
 export class CreateBrandDto extends BrandFields {
-  /** An existing company… */
+  /** An existing organisation… */
   @IsOptional()
   @IsUUID()
   organisationId?: string
@@ -132,7 +146,7 @@ export class CreateBrandDto extends BrandFields {
 }
 
 export class UpdateBrandDto extends BrandFields {
-  /** Move the brand to another company. */
+  /** Move the brand to another organisation. */
   @IsOptional()
   @IsUUID()
   organisationId?: string
@@ -158,7 +172,7 @@ export class CreatePersonDto extends PersonFields {
   @IsUUID()
   organisationId!: string
 
-  /** Brands of that company to link the person to straight away. */
+  /** Brands of that organisation to link the person to straight away. */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(50)
@@ -167,6 +181,35 @@ export class CreatePersonDto extends PersonFields {
 }
 
 export class UpdatePersonDto extends PersonFields {}
+
+export class ProductFields {
+  @Transform(trim) @IsOptional() @IsString() @MinLength(1, { message: "Give the product a name." }) @MaxLength(200) name?: string
+  @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(80) sku?: string | null
+  /** Empty: the product takes the brand's category and sub-category. */
+  @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) categoryCode?: string | null
+  @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) subCategoryCode?: string | null
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(5000) description?: string
+
+  /** Codes from the Tags list; the record's tags become exactly these. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  tagCodes?: string[]
+}
+
+/** `name` is required (checked in the service). */
+export class CreateProductDto extends ProductFields {}
+
+export class UpdateProductDto extends ProductFields {}
+
+export class CreateTagDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(1, { message: "Give the tag a name." })
+  @MaxLength(60)
+  label!: string
+}
 
 export class LinkPersonDto {
   @IsUUID()

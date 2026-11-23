@@ -216,6 +216,7 @@ model ListValue {
   list     ListDefinition @relation(fields: [listKey], references: [key])
   parent   ListValue?     @relation("ListValueParent", fields: [parentId], references: [id])
   children ListValue[]    @relation("ListValueParent")
+  tagLinks RecordTag[]
 
   @@unique([listKey, code])
   @@index([listKey, retiredAt])
@@ -336,6 +337,7 @@ model Brand {
   organisation Organisation  @relation(fields: [organisationId], references: [id])
   owner        User?         @relation("BrandOwner", fields: [ownerId], references: [id])
   people       BrandPerson[]
+  products     Product[]
 
   @@index([organisationId])
   @@index([domain])
@@ -392,4 +394,50 @@ model BrandPerson {
   @@index([brandId, removedAt])
   @@index([personId, removedAt])
   @@map("brand_person")
+}
+
+// ---------------------------------------------------------------- Products and tags
+
+/// A product of a brand, e.g. Garnier face wash. Category and sub-category are optional here: when empty, the
+/// product takes the brand's.
+model Product {
+  id              String    @id @default(uuid()) @db.Uuid
+  brandId         String    @map("brand_id") @db.Uuid
+  name            String
+  /// The brand's own product code, if known.
+  sku             String?
+  categoryCode    String?   @map("category_code")
+  subCategoryCode String?   @map("sub_category_code")
+  description     String    @default("")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  createdById  String?   @map("created_by_id") @db.Uuid
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  updatedById  String?   @map("updated_by_id") @db.Uuid
+  archivedAt   DateTime? @map("archived_at")
+  archivedById String?   @map("archived_by_id") @db.Uuid
+
+  brand Brand @relation(fields: [brandId], references: [id])
+
+  @@index([brandId, archivedAt])
+  @@map("product")
+}
+
+/// A tag (a value of the "tag" list) on an organisation, a brand or a product. Taking a tag off sets removed_at;
+/// the row stays as history.
+model RecordTag {
+  id          String    @id @default(uuid()) @db.Uuid
+  tagId       String    @map("tag_id") @db.Uuid
+  /// organisation | brand | product
+  entityType  String    @map("entity_type")
+  entityId    String    @map("entity_id") @db.Uuid
+  addedAt     DateTime  @default(now()) @map("added_at")
+  addedById   String?   @map("added_by_id") @db.Uuid
+  removedAt   DateTime? @map("removed_at")
+  removedById String?   @map("removed_by_id") @db.Uuid
+
+  tag ListValue @relation(fields: [tagId], references: [id])
+
+  @@index([entityType, entityId, removedAt])
+  @@index([tagId, removedAt])
+  @@map("record_tag")
 }

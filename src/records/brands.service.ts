@@ -6,8 +6,10 @@ import { badRequest, conflict, notFound } from "../common/errors"
 import type { RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { OrganisationsService } from "./organisations.service"
-import { archiveData, checkCountries, checkCountry, checkListCode, describe, listLabels, normaliseDomain, normaliseUrl, restoreData, showCountries, showCountry, showUsd } from "./records-common"
+import { ProductsService } from "./products.service"
+import { archiveData, checkCategory, checkCountries, checkCountry, checkListCode, describe, listLabels, normaliseDomain, normaliseUrl, restoreData, showCountries, showCountry, showUsd } from "./records-common"
 import type { ArchiveDto, BrandFields, CreateBrandDto, LinkPersonDto, UpdateBrandDto } from "./records.dto"
+import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
 
@@ -26,6 +28,8 @@ export class BrandsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly organisations: OrganisationsService,
+    private readonly products: ProductsService,
+    private readonly tags: TagsService,
   ) {}
 
   async list(archived: boolean) {
@@ -35,10 +39,11 @@ export class BrandsService {
       include: {
         organisation: { select: { id: true, name: true, excluded: true } },
         owner: { select: { id: true, name: true } },
-        _count: { select: { people: { where: { removedAt: null, person: { archivedAt: null } } } } },
+        _count: { select: { people: { where: { removedAt: null, person: { archivedAt: null } } }, products: { where: { archivedAt: null } } } },
       },
     })
-    return rows.map(({ _count, ...b }) => ({ ...view(b), peopleCount: _count.people }))
+    const tags = await this.tags.forEntities("brand", rows.map((b) => b.id))
+    return rows.map(({ _count, ...b }) => ({ ...view(b), peopleCount: _count.people, productCount: _count.products, tags: tags.get(b.id) ?? [] }))
   }
 
   async get(id: string) {
@@ -56,7 +61,14 @@ export class BrandsService {
     })
     if (!b) throw notFound("That brand")
     const { people, ...rest } = b
-    return { ...view(rest), people: people.map((l) => ({ ...l.person, isPrimary: l.isPrimary, linkedAt: l.addedAt })) }
+    const [tags, orgTags, products] = await Promise.all([this.tags.forEntity("brand", id), this.tags.forEntity("organisation", b.organisationId), this.products.forBrand(id)])
+    return {
+      ...view(rest),
+      organisation: { ...rest.organisation, tags: orgTags },
+      tags,
+      products,
+      people: people.map((l) => ({ ...l.person, isPrimary: l.isPrimary, linkedAt: l.addedAt })),
+    }
   }
 
   /** Before adding or renaming: a brand already on this website, and brands with a similar name. */
@@ -83,8 +95,8 @@ export class BrandsService {
   }
 
   /**
-   * Brands of other companies in the same parent group as `organisationId`, so two people don't approach one
-   * group separately. The group is the company's parent group (or the company itself when it is the parent).
+   * Brands of other organisations in the same parent group as `organisationId`, so two people don't approach one
+   * group separately. The group is the organisation's parent group (or the organisation itself when it is the parent).
    */
   private async sameGroup(organisationId: string | undefined, exceptId?: string) {
     if (!organisationId) return null
@@ -93,10 +105,10 @@ export class BrandsService {
     const rootId = org.parentId ?? org.id
     const root = await this.prisma.organisation.findUnique({ where: { id: rootId }, select: { id: true, name: true, members: { select: { id: true } } } })
     if (!root) return null
-    const companies = [root.id, ...root.members.map((m) => m.id)].filter((id) => id !== org.id)
-    if (!companies.length) return null
+    const groupOrgs = [root.id, ...root.members.map((m) => m.id)].filter((id) => id !== org.id)
+    if (!groupOrgs.length) return null
     const brands = await this.prisma.brand.findMany({
-      where: { organisationId: { in: companies }, archivedAt: null, ...(exceptId ? { id: { not: exceptId } } : {}) },
+      where: { organisationId: { in: groupOrgs }, archivedAt: null, ...(exceptId ? { id: { not: exceptId } } : {}) },
       orderBy: { name: "asc" },
       take: 10,
       select: { id: true, name: true, domain: true, organisation: { select: { name: true } } },
@@ -119,20 +131,12 @@ export class BrandsService {
       if (clash) throw conflict(`${clash.name} (archived) uses ${domain}. Restore it instead of adding it again.`)
       data.domain = domain
     }
-    const category = dto.categoryCode !== undefined ? await checkListCode(db, "category", dto.categoryCode, current?.categoryCode, "Category") : undefined
-    if (category) data.categoryCode = category.code
-    if (dto.subCategoryCode !== undefined) {
-      const sub = await checkListCode(db, "sub_category", dto.subCategoryCode, current?.subCategoryCode, "Sub-category")
-      const categoryCode = category ? category.code : (current?.categoryCode ?? null)
-      if (sub.code) {
-        if (!categoryCode) throw badRequest("Pick the category before the sub-category.")
-        const parent = sub.parentId ? await db.listValue.findUnique({ where: { id: sub.parentId } }) : null
-        if (parent?.code !== categoryCode) throw badRequest(`${sub.label} isn't a sub-category of the chosen category.`)
-      }
-      data.subCategoryCode = sub.code
-    } else if (category && current?.subCategoryCode && category.code !== current.categoryCode) {
-      // A new category makes the old sub-category wrong: clear it.
-      data.subCategoryCode = null
+    Object.assign(data, await checkCategory(db, dto, current))
+    // Every brand has a category and a sub-category: they can be changed, never emptied.
+    if (!current || dto.categoryCode !== undefined || dto.subCategoryCode !== undefined) {
+      const cat = data.categoryCode !== undefined ? data.categoryCode : current?.categoryCode
+      const sub = data.subCategoryCode !== undefined ? data.subCategoryCode : current?.subCategoryCode
+      if (!cat || !sub) throw badRequest("Pick the brand's category and sub-category.")
     }
     if (dto.routingCode !== undefined) data.routingCode = (await checkListCode(db, "routing", dto.routingCode, current?.routingCode, "Lane")).code
     if (dto.tierCode !== undefined) data.tierCode = (await checkListCode(db, "tier", dto.tierCode, current?.tierCode, "Tier")).code
@@ -163,7 +167,7 @@ export class BrandsService {
     const pick = <K extends keyof Brand>(k: K) => (k in after ? after[k] : before[k])
     return describe([
       { label: "Name", before: before.name, after: pick("name") },
-      { label: "Company", before: before.organisationId, after: pick("organisationId"), show: orgName },
+      { label: "Organisation", before: before.organisationId, after: pick("organisationId"), show: orgName },
       { label: "Website", before: before.domain, after: pick("domain") },
       { label: "Category", before: before.categoryCode, after: pick("categoryCode"), show: label(cat) },
       { label: "Sub-category", before: before.subCategoryCode, after: pick("subCategoryCode"), show: label(sub) },
@@ -182,18 +186,19 @@ export class BrandsService {
   async create(dto: CreateBrandDto, me: RequestUser, ip: string | null) {
     if (!dto.name?.trim()) throw badRequest("Give the brand a name.")
     if (!dto.domain?.trim()) throw badRequest("Add the brand's website. It's how duplicates are caught.")
-    if (!dto.organisationId === !dto.newOrganisation) throw badRequest("Pick the company the brand belongs to, or add a new one.")
+    if (!dto.organisationId === !dto.newOrganisation) throw badRequest("Pick the organisation the brand belongs to, or add a new one.")
     const id = await this.prisma.$transaction(async (tx) => {
       let organisationId = dto.organisationId
       if (organisationId) {
         const org = await tx.organisation.findUnique({ where: { id: organisationId } })
-        if (!org || org.archivedAt) throw badRequest("That company doesn't exist or was archived.")
+        if (!org || org.archivedAt) throw badRequest("That organisation doesn't exist or was archived.")
       } else {
         organisationId = (await this.organisations.createIn(tx, dto.newOrganisation!, me, ip)).id
       }
       const data = (await this.prepare(dto, null, tx)) as Prisma.BrandUncheckedCreateInput
       const b = await tx.brand.create({ data: { ...data, name: dto.name!.trim(), domain: data.domain as string, organisationId, source: "manual", createdById: me.id, updatedById: me.id } })
-      const d = await this.changes({}, b, tx)
+      const t = await this.tags.set(tx, "brand", b.id, dto.tagCodes, me)
+      const d = TagsService.merge(await this.changes({}, b, tx), t)
       await this.audit.record({ actor: me, section: SECTION, action: `Added the brand ${b.name}`, entityType: "brand", entityId: b.id, after: d.after || null, ip }, tx)
       return b.id
     })
@@ -208,12 +213,12 @@ export class BrandsService {
       const data = await this.prepare(dto, b, tx)
       if (dto.organisationId && dto.organisationId !== b.organisationId) {
         const org = await tx.organisation.findUnique({ where: { id: dto.organisationId } })
-        if (!org || org.archivedAt) throw badRequest("That company doesn't exist or was archived.")
+        if (!org || org.archivedAt) throw badRequest("That organisation doesn't exist or was archived.")
         const linked = await tx.brandPerson.count({ where: { brandId: id, removedAt: null } })
-        if (linked) throw badRequest("Unlink the brand's people before moving it to another company: people belong to their company.")
+        if (linked) throw badRequest("Unlink the brand's people before moving it to another organisation: people belong to their organisation.")
         data.organisationId = dto.organisationId
       }
-      const d = await this.changes(b, data as Partial<Brand>, tx)
+      const d = TagsService.merge(await this.changes(b, data as Partial<Brand>, tx), await this.tags.set(tx, "brand", id, dto.tagCodes, me))
       if (!d.changed) return
       await tx.brand.update({ where: { id }, data: { ...data, updatedById: me.id } })
       await this.audit.record({ actor: me, section: SECTION, action: `Changed the brand ${(data.name as string) ?? b.name}`, entityType: "brand", entityId: id, before: d.before, after: d.after, ip }, tx)
@@ -238,7 +243,7 @@ export class BrandsService {
       const b = await tx.brand.findUnique({ where: { id }, include: { organisation: true } })
       if (!b) throw notFound("That brand")
       if (!b.archivedAt) return
-      if (b.organisation.archivedAt) throw badRequest(`Restore the company ${b.organisation.name} first.`)
+      if (b.organisation.archivedAt) throw badRequest(`Restore the organisation ${b.organisation.name} first.`)
       const clash = await tx.brand.findFirst({ where: { domain: b.domain, archivedAt: null } })
       if (clash) throw conflict(`${clash.name} now uses ${b.domain}. Archive or change one of them first.`)
       await tx.brand.update({ where: { id }, data: restoreData(me) })
@@ -247,14 +252,14 @@ export class BrandsService {
     return this.get(id)
   }
 
-  /** Links a person of the brand's company to the brand, or changes whether they're the main contact. */
+  /** Links a person of the brand's organisation to the brand, or changes whether they're the main contact. */
   async linkPerson(brandId: string, dto: LinkPersonDto, me: RequestUser, ip: string | null) {
     await this.prisma.$transaction(async (tx) => {
       const b = await tx.brand.findUnique({ where: { id: brandId } })
       if (!b || b.archivedAt) throw badRequest("That brand doesn't exist or was archived.")
       const p = await tx.person.findUnique({ where: { id: dto.personId } })
       if (!p || p.archivedAt) throw badRequest("That person doesn't exist or was archived.")
-      if (p.organisationId !== b.organisationId) throw badRequest(`${personName(p)} works for another company. Add them to this brand's company first.`)
+      if (p.organisationId !== b.organisationId) throw badRequest(`${personName(p)} works for another organisation. Add them to this brand's organisation first.`)
       const existing = await tx.brandPerson.findFirst({ where: { brandId, personId: p.id, removedAt: null } })
       const primary = dto.isPrimary ?? existing?.isPrimary ?? false
       if (primary) await tx.brandPerson.updateMany({ where: { brandId, removedAt: null, isPrimary: true, personId: { not: p.id } }, data: { isPrimary: false } })
@@ -291,14 +296,15 @@ export class BrandsService {
     return this.get(brandId)
   }
 
-  /** Everything that happened to the brand, its company and its people, newest first. */
+  /** Everything that happened to the brand, its organisation and its people, newest first. */
   async history(id: string) {
-    const b = await this.prisma.brand.findUnique({ where: { id }, select: { organisationId: true, people: { select: { personId: true } } } })
+    const b = await this.prisma.brand.findUnique({ where: { id }, select: { organisationId: true, people: { select: { personId: true } }, products: { select: { id: true } } } })
     if (!b) throw notFound("That brand")
     return this.audit.forEntities([
       { type: "brand", ids: [id] },
       { type: "organisation", ids: [b.organisationId] },
       { type: "person", ids: [...new Set(b.people.map((p) => p.personId))] },
+      { type: "product", ids: b.products.map((p) => p.id) },
     ])
   }
 }

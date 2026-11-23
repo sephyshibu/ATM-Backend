@@ -55,32 +55,37 @@ export const LISTS: ListDef[] = [
   {
     key: "category",
     label: "Categories",
-    description: "Gate 01 and the first part of the template choice.",
+    description: "Every brand has one category and one sub-category. Add more categories here any time.",
     values: [
-      { code: "HW", label: "Health and wellness" },
-      { code: "BE", label: "Beauty" },
-      { code: "FF", label: "Functional food" },
+      { code: "HW", label: "Health supplements" },
+      { code: "FF", label: "Functional food & beverages" },
+      { code: "BE", label: "Beauty & wellness" },
+      { code: "PN", label: "Pet nutrition" },
     ],
   },
   {
     key: "sub_category",
     label: "Sub-categories",
-    description: "Each sits under a category. The template is picked by category + sub-category + lane, falling back to the category template.",
+    description: "Each sits under one category; a category can have any number. The template is picked by category + sub-category + lane, falling back to the category template.",
     parent: "category",
     values: [
-      { code: "HW_VITAMINS", label: "Vitamins and supplements", parent: "HW" },
+      { code: "HW_VITAMINS", label: "Vitamins and minerals", parent: "HW" },
+      { code: "HW_PROTEIN", label: "Protein powder", parent: "HW" },
       { code: "HW_SPORTS", label: "Sports nutrition", parent: "HW" },
       { code: "HW_HERBAL", label: "Herbal and traditional", parent: "HW" },
       { code: "HW_GUT", label: "Probiotics and gut health", parent: "HW" },
+      { code: "FF_DRINKS", label: "Functional drinks", parent: "FF" },
+      { code: "FF_PROTEIN", label: "Protein snacks", parent: "FF" },
+      { code: "FF_PLANT", label: "Plant-based foods", parent: "FF" },
+      { code: "FF_INFANT", label: "Baby and infant nutrition", parent: "FF" },
       { code: "BE_SKINCARE", label: "Skincare", parent: "BE" },
       { code: "BE_HAIRCARE", label: "Haircare", parent: "BE" },
       { code: "BE_MAKEUP", label: "Makeup", parent: "BE" },
       { code: "BE_FRAGRANCE", label: "Fragrance", parent: "BE" },
       { code: "BE_MENS", label: "Men's grooming", parent: "BE" },
-      { code: "FF_DRINKS", label: "Functional drinks", parent: "FF" },
-      { code: "FF_PROTEIN", label: "Protein snacks", parent: "FF" },
-      { code: "FF_PLANT", label: "Plant-based foods", parent: "FF" },
-      { code: "FF_INFANT", label: "Baby and infant nutrition", parent: "FF" },
+      { code: "PN_FOOD", label: "Pet food", parent: "PN" },
+      { code: "PN_SUPPLEMENTS", label: "Pet supplements", parent: "PN" },
+      { code: "PN_TREATS", label: "Treats and chews", parent: "PN" },
     ],
   },
   {
@@ -172,6 +177,12 @@ export const LISTS: ListDef[] = [
     ],
   },
   {
+    key: "tag",
+    label: "Tags",
+    description: "Free labels for organisations, brands and products (e.g. Halal, Vegan, Trade show 2026). Anyone who can edit records can add a new tag while tagging; rename or retire them here.",
+    values: [],
+  },
+  {
     key: "archive_reason",
     label: "Archive reasons",
     description: "Picked when a brand, company or person is archived.",
@@ -183,4 +194,15 @@ export const LISTS: ListDef[] = [
       { code: "OTHER", label: "Other" },
     ],
   },
+]
+
+/**
+ * Labels the first version of the catalogue used. The seed renames a value only while it still has its old label,
+ * so a name someone changed in Settings is never overwritten.
+ */
+export const LIST_RELABELS: { listKey: string; code: string; from: string; to: string }[] = [
+  { listKey: "category", code: "HW", from: "Health and wellness", to: "Health supplements" },
+  { listKey: "category", code: "FF", from: "Functional food", to: "Functional food & beverages" },
+  { listKey: "category", code: "BE", from: "Beauty", to: "Beauty & wellness" },
+  { listKey: "sub_category", code: "HW_VITAMINS", from: "Vitamins and supplements", to: "Vitamins and minerals" },
 ]

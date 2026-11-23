@@ -66,6 +66,33 @@ export async function checkListCode(db: Db, listKey: string, code: string | null
   return { code: c, label: v.label, parentId: v.parentId, id: v.id }
 }
 
+/**
+ * Category and sub-category, for brands and products. A sub-category must sit under the chosen category; a new
+ * category clears a sub-category that no longer fits. Returns only the fields to change.
+ */
+export async function checkCategory(
+  db: Db,
+  dto: { categoryCode?: string | null; subCategoryCode?: string | null },
+  current: { categoryCode: string | null; subCategoryCode: string | null } | null,
+) {
+  const data: { categoryCode?: string | null; subCategoryCode?: string | null } = {}
+  const category = dto.categoryCode !== undefined ? await checkListCode(db, "category", dto.categoryCode, current?.categoryCode, "Category") : undefined
+  if (category) data.categoryCode = category.code
+  const categoryCode = category ? category.code : (current?.categoryCode ?? null)
+  if (dto.subCategoryCode !== undefined) {
+    const sub = await checkListCode(db, "sub_category", dto.subCategoryCode, current?.subCategoryCode, "Sub-category")
+    if (sub.code) {
+      if (!categoryCode) throw badRequest("Pick the category before the sub-category.")
+      const parent = sub.parentId ? await db.listValue.findUnique({ where: { id: sub.parentId } }) : null
+      if (parent?.code !== categoryCode) throw badRequest(`${sub.label} isn't a sub-category of the chosen category.`)
+    }
+    data.subCategoryCode = sub.code
+  } else if (category && current?.subCategoryCode && category.code !== current.categoryCode) {
+    data.subCategoryCode = null
+  }
+  return data
+}
+
 /** Labels for codes in one go, for screens and the change log. */
 export async function listLabels(db: Db, listKey: string) {
   const values = await db.listValue.findMany({ where: { listKey }, select: { code: true, label: true } })

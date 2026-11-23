@@ -7,12 +7,26 @@ import { PrismaService } from "../prisma/prisma.service"
 import { BrandsService } from "./brands.service"
 import { OrganisationsService } from "./organisations.service"
 import { PeopleService } from "./people.service"
-import { ArchiveDto, CreateBrandDto, CreateOrganisationDto, CreatePersonDto, LinkPersonDto, UpdateBrandDto, UpdateOrganisationDto, UpdatePersonDto } from "./records.dto"
+import { ProductsService } from "./products.service"
+import {
+  ArchiveDto,
+  CreateBrandDto,
+  CreateOrganisationDto,
+  CreatePersonDto,
+  CreateProductDto,
+  CreateTagDto,
+  LinkPersonDto,
+  UpdateBrandDto,
+  UpdateOrganisationDto,
+  UpdatePersonDto,
+  UpdateProductDto,
+} from "./records.dto"
+import { TagsService } from "./tags.service"
 
 /** The pick-lists the Records screens use (retired values are included so old records still show their names). */
-const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason"]
+const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag"]
 
-// Records: brands, companies (organisations) and people. Looking needs "View brands and people"; adding and
+// Records: brands, organisations and people. Looking needs "View brands and people"; adding and
 // changing needs "Edit brands and people"; archiving and restoring needs "Archive and restore records".
 
 @Controller("records")
@@ -22,7 +36,42 @@ export class RecordsController {
     private readonly brands: BrandsService,
     private readonly organisations: OrganisationsService,
     private readonly people: PeopleService,
+    private readonly products: ProductsService,
+    private readonly tags: TagsService,
   ) {}
+
+  /** Adds a tag to the Tags list while tagging (an existing tag with the same name is reused). */
+  @Post("tags")
+  @RequirePermissions("records.edit")
+  createTag(@Body() dto: CreateTagDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.tags.create(dto.label, me, requestIp(req))
+  }
+
+  // ---------------------------------------------------------------- Products (each call returns the brand's products)
+
+  @Post("brands/:id/products")
+  @RequirePermissions("records.edit")
+  createProduct(@Param("id", ParseUUIDPipe) id: string, @Body() dto: CreateProductDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.products.create(id, dto, me, requestIp(req))
+  }
+
+  @Patch("products/:id")
+  @RequirePermissions("records.edit")
+  updateProduct(@Param("id", ParseUUIDPipe) id: string, @Body() dto: UpdateProductDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.products.update(id, dto, me, requestIp(req))
+  }
+
+  @Post("products/:id/archive")
+  @RequirePermissions("records.archive")
+  archiveProduct(@Param("id", ParseUUIDPipe) id: string, @Body() dto: ArchiveDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.products.archive(id, dto, me, requestIp(req))
+  }
+
+  @Post("products/:id/restore")
+  @RequirePermissions("records.archive")
+  restoreProduct(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.products.restore(id, me, requestIp(req))
+  }
 
   /** Everything the forms need to draw their choices: lists, countries and the people who can own a brand. */
   @Get("options")
@@ -102,7 +151,7 @@ export class RecordsController {
     return this.brands.unlinkPerson(id, personId, me, requestIp(req))
   }
 
-  // ---------------------------------------------------------------- Companies
+  // ---------------------------------------------------------------- Organisations
 
   @Get("organisations")
   @RequirePermissions("records.view")

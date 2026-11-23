@@ -68,6 +68,17 @@ npx prisma db seed                      # adds the tier, buying role, consent an
 npx prisma migrate dev --name company-group   # adds parent group, legal entity and exclusion to companies
 ```
 
+Products and tags (after this step, once):
+
+```
+npx prisma migrate dev --name products-tags   # adds product and record_tag
+npx prisma db seed                            # adds the Tags list; renames the first-version category labels
+```
+
+Hierarchy: **organisation** (the legal entity ATM signs with) › **brands** › **products**. Every brand has a
+category and a sub-category (Settings → Lists); a product may have its own, or takes the brand's. Tags are values
+of the Tags list, put on organisations, brands and products (`record_tag`; taking a tag off keeps the row).
+
 Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
 ## API (all under `/api/v1`)
@@ -86,7 +97,8 @@ Lane is stored in the `routing_code` column and the `routing` list (renaming the
 | GET | `/records/options`, `/records/brands`, `/records/brands/check`, `/records/brands/:id`, `/records/brands/:id/history` | records.view |
 | GET | `/records/organisations`, `/records/organisations/:id`, `/records/organisations/:id/history`, `/records/people`, `/records/people/:id` | records.view |
 | POST | `/records/brands`, `/records/organisations`, `/records/people`, `/records/brands/:id/people`, `/records/brands/:id/people/:personId/unlink` · PATCH the same records | records.edit |
-| POST | `/records/{brands,organisations,people}/:id/archive`, `.../restore` | records.archive |
+| POST | `/records/brands/:id/products`, `/records/tags` · PATCH `/records/products/:id` | records.edit |
+| POST | `/records/{brands,organisations,people,products}/:id/archive`, `.../restore` | records.archive |
 | GET | `/audit`, `/audit/sections` | audit.view |
 | GET | `/health` | public |
 
@@ -102,7 +114,7 @@ src/auth/                 Google sign-in, sessions, access (permissions)
 src/users/                invite, edit, deactivate, reactivate
 src/roles/                roles and permissions
 src/settings/             configuration values and pick-lists
-src/records/              brands, companies (organisations), people, brand–person links
+src/records/              organisations, brands, products, people, tags, brand–person links
 src/audit/                the change log
 src/mail/                 invite emails (log or SMTP)
 ```

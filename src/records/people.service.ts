@@ -19,7 +19,7 @@ const linksInclude = {
 type Row = Prisma.PersonGetPayload<{ include: typeof linksInclude }>
 const view = ({ brands, ...p }: Row) => ({ ...p, archived: !!p.archivedAt, brands: brands.map((l) => ({ ...l.brand, isPrimary: l.isPrimary })) })
 
-/** People at a brand's company: contacts for outreach and calls. An email belongs to one active person. */
+/** People at a brand's organisation: contacts for outreach and calls. An email belongs to one active person. */
 @Injectable()
 export class PeopleService {
   constructor(
@@ -93,10 +93,10 @@ export class PeopleService {
     if (!dto.firstName?.trim()) throw badRequest("Add a first name.")
     const id = await this.prisma.$transaction(async (tx) => {
       const org = await tx.organisation.findUnique({ where: { id: dto.organisationId } })
-      if (!org || org.archivedAt) throw badRequest("That company doesn't exist or was archived.")
+      if (!org || org.archivedAt) throw badRequest("That organisation doesn't exist or was archived.")
       const brandIds = [...new Set(dto.brandIds ?? [])]
       const brands = brandIds.length ? await tx.brand.findMany({ where: { id: { in: brandIds }, organisationId: org.id, archivedAt: null } }) : []
-      if (brands.length !== brandIds.length) throw badRequest("A person can only be linked to active brands of their own company.")
+      if (brands.length !== brandIds.length) throw badRequest("A person can only be linked to active brands of their own organisation.")
       const data = (await this.prepare(dto, null, tx)) as Prisma.PersonUncheckedCreateInput
       const p = await tx.person.create({ data: { ...data, firstName: dto.firstName!.trim(), organisationId: org.id, createdById: me.id, updatedById: me.id } })
       if (brands.length) await tx.brandPerson.createMany({ data: brands.map((b) => ({ brandId: b.id, personId: p.id, addedById: me.id })) })
@@ -142,7 +142,7 @@ export class PeopleService {
       const p = await tx.person.findUnique({ where: { id }, include: { organisation: true } })
       if (!p) throw notFound("That person")
       if (!p.archivedAt) return
-      if (p.organisation.archivedAt) throw badRequest(`Restore the company ${p.organisation.name} first.`)
+      if (p.organisation.archivedAt) throw badRequest(`Restore the organisation ${p.organisation.name} first.`)
       if (p.email) {
         const clash = await tx.person.findFirst({ where: { email: p.email, archivedAt: null } })
         if (clash) throw conflict(`${p.email} now belongs to ${nameOf(clash)}. Change one of the emails first.`)

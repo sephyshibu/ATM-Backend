@@ -9,7 +9,7 @@ import "dotenv/config"
 import { PrismaClient } from "@prisma/client"
 
 import { BUILT_IN_ROLES, PERMISSIONS } from "../src/common/permissions"
-import { LISTS, SETTINGS } from "../src/common/settings-catalogue"
+import { LIST_RELABELS, LISTS, SETTINGS } from "../src/common/settings-catalogue"
 import { hardenDatabase, syncPermissionCatalogue } from "../src/prisma/db-hardening"
 
 const prisma = new PrismaClient()
@@ -82,6 +82,17 @@ async function seedLists() {
   console.log("  lists: up to date")
 }
 
+/** Renames values that still carry a first-version label (never one someone renamed in Settings). */
+async function relabelLists() {
+  for (const r of LIST_RELABELS) {
+    const v = await prisma.listValue.findUnique({ where: { listKey_code: { listKey: r.listKey, code: r.code } } })
+    if (!v || v.label !== r.from) continue
+    await prisma.listValue.update({ where: { id: v.id }, data: { label: r.to } })
+    await prisma.auditEvent.create({ data: { actorLabel: SEED, section: "Lists", action: `Renamed ${r.from} to ${r.to}`, entityType: "list_value", entityId: v.id, before: r.from, after: r.to } })
+    console.log(`  list: ${r.from} → ${r.to}`)
+  }
+}
+
 async function seedAdmins(roleIds: Map<string, string>) {
   const emails = (process.env.SEED_ADMIN_EMAILS ?? "")
     .split(",")
@@ -121,6 +132,7 @@ async function main() {
   await retireTester()
   await seedSettings()
   await seedLists()
+  await relabelLists()
   await seedAdmins(roles)
   console.log("Done.")
 }
