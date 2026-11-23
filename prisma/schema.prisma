@@ -287,6 +287,8 @@ model Organisation {
   exclusionReason String?   @map("exclusion_reason")
   excludedAt      DateTime? @map("excluded_at")
   excludedById    String?   @map("excluded_by_id") @db.Uuid
+  /// Values of the organisation fields added in Settings → Fields, by field key.
+  custom          Json      @default("{}")
   createdAt    DateTime  @default(now()) @map("created_at")
   createdById  String?   @map("created_by_id") @db.Uuid
   updatedAt    DateTime  @updatedAt @map("updated_at")
@@ -325,6 +327,10 @@ model Brand {
   ownerId          String?   @map("owner_id") @db.Uuid
   /// manual | import | enquiry | referral
   source           String    @default("manual")
+  /// Values of the brand fields added in Settings → Fields, by field key.
+  custom           Json      @default("{}")
+  /// The import that created it, if any.
+  importBatchId    String?   @map("import_batch_id") @db.Uuid
   description      String    @default("")
   linkedinUrl      String?   @map("linkedin_url")
   createdAt        DateTime  @default(now()) @map("created_at")
@@ -338,6 +344,7 @@ model Brand {
   owner        User?         @relation("BrandOwner", fields: [ownerId], references: [id])
   people       BrandPerson[]
   products     Product[]
+  leads        Lead[]
 
   @@index([organisationId])
   @@index([domain])
@@ -361,6 +368,8 @@ model Person {
   buyingRoleCode String?   @map("buying_role_code")
   consentCode    String?   @map("consent_code")
   notes          String    @default("")
+  /// Values of the person fields added in Settings → Fields, by field key.
+  custom         Json      @default("{}")
   createdAt      DateTime  @default(now()) @map("created_at")
   createdById    String?   @map("created_by_id") @db.Uuid
   updatedAt      DateTime  @updatedAt @map("updated_at")
@@ -409,6 +418,11 @@ model Product {
   categoryCode    String?   @map("category_code")
   subCategoryCode String?   @map("sub_category_code")
   description     String    @default("")
+  /// Values of the product fields added in Settings → Fields, by field key.
+  custom          Json      @default("{}")
+  /// manual | import
+  source          String    @default("manual")
+  importBatchId   String?   @map("import_batch_id") @db.Uuid
   createdAt    DateTime  @default(now()) @map("created_at")
   createdById  String?   @map("created_by_id") @db.Uuid
   updatedAt    DateTime  @updatedAt @map("updated_at")
@@ -440,4 +454,126 @@ model RecordTag {
   @@index([entityType, entityId, removedAt])
   @@index([tagId, removedAt])
   @@map("record_tag")
+}
+
+// ---------------------------------------------------------------- Custom fields and imports
+
+/// A field added in Settings → Fields for organisations, brands, products or people. Values live in the record's `custom` JSON under
+/// `key`. The key and type never change once made (so stored values keep their meaning); a field is retired,
+/// never deleted.
+model CustomField {
+  id           String    @id @default(uuid()) @db.Uuid
+  /// organisation | brand | product | person
+  entityType   String    @map("entity_type")
+  /// Stable, e.g. shelf_life_months.
+  key          String
+  label        String
+  /// text | long_text | number | date | yes_no | choice | multi_choice
+  type         String
+  /// For choice and multi_choice.
+  options      String[]  @default([])
+  required     Boolean   @default(false)
+  help         String    @default("")
+  sortOrder    Int       @default(0) @map("sort_order")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  createdById  String?   @map("created_by_id") @db.Uuid
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  updatedById  String?   @map("updated_by_id") @db.Uuid
+  retiredAt    DateTime? @map("retired_at")
+  retiredById  String?   @map("retired_by_id") @db.Uuid
+
+  @@unique([entityType, key])
+  @@map("custom_field")
+}
+
+/// One Excel or CSV import: what was mapped, how many rows came in, and every rejected row with its reasons.
+model ImportBatch {
+  id            String   @id @default(uuid()) @db.Uuid
+  /// brands | products
+  kind          String
+  /// For product imports: the brand the products went into.
+  brandId       String?  @map("brand_id") @db.Uuid
+  fileName      String   @map("file_name")
+  /// Column → field, as chosen on the mapping step.
+  mapping       Json     @default("{}")
+  rowCount      Int      @map("row_count")
+  createdCount  Int      @map("created_count")
+  rejectedCount Int      @map("rejected_count")
+  /// [{ row, reasons }] for every row that was not imported.
+  rejected      Json     @default("[]")
+  createdAt     DateTime @default(now()) @map("created_at")
+  createdById   String?  @map("created_by_id") @db.Uuid
+
+  @@index([kind, createdAt])
+  @@map("import_batch")
+}
+
+// ---------------------------------------------------------------- Leads (the journey engine)
+
+/// One brand in one journey (a quarter's campaign, an enquiry). Stages live on the lead, never on the brand.
+/// `stage` is the main stage (register → target → contacted → warm → hot → sql); `lane` is a side lane the lead
+/// is parked in (nurture, parked, on_hold…), with `stage` kept so it can return. Only the journey engine changes
+/// these, and every change is a lead_move row.
+model Lead {
+  id             String    @id @default(uuid()) @db.Uuid
+  brandId        String    @map("brand_id") @db.Uuid
+  /// The main contact for this journey.
+  personId       String?   @map("person_id") @db.Uuid
+  /// outbound | enquiry | referral | investor
+  source         String    @default("outbound")
+  stage          String
+  lane           String?
+  /// Return or recheck date for the lane (nurture, parked, on hold), as a date.
+  laneUntil      DateTime? @map("lane_until") @db.Date
+  /// reply_received | no_signer | override
+  flags          String[]  @default([])
+  stageChangedAt DateTime  @default(now()) @map("stage_changed_at")
+  /// Set when the journey ends (SQL, disqualified, not pursued, suppressed).
+  closedAt       DateTime? @map("closed_at")
+  importBatchId  String?   @map("import_batch_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+  createdById    String?   @map("created_by_id") @db.Uuid
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  brand Brand      @relation(fields: [brandId], references: [id])
+  moves LeadMove[]
+
+  @@index([brandId])
+  @@index([stage, lane])
+  @@map("lead")
+}
+
+/// Every change to a lead's stage, lane or flags: who or what made it, why, and whether it was undone.
+/// Rows are never changed except to mark them undone.
+model LeadMove {
+  id           String    @id @default(uuid()) @db.Uuid
+  leadId       String    @map("lead_id") @db.Uuid
+  /// The move or event, e.g. to_target, reply_interested, event.emailsSent, override, undo.
+  moveKey      String    @map("move_key")
+  /// person | system | override | undo
+  kind         String
+  fromStage    String?   @map("from_stage")
+  fromLane     String?   @map("from_lane")
+  fromUntil    DateTime? @map("from_until") @db.Date
+  fromFlags    String[]  @default([]) @map("from_flags")
+  toStage      String    @map("to_stage")
+  toLane       String?   @map("to_lane")
+  toUntil      DateTime? @map("to_until") @db.Date
+  toFlags      String[]  @default([]) @map("to_flags")
+  reasonCode   String?   @map("reason_code")
+  reason       String?
+  /// A buyer event's own id (e.g. the lemlist event id): the same event never moves a lead twice.
+  eventKey     String?   @unique @map("event_key")
+  actorId      String?   @map("actor_id") @db.Uuid
+  actorLabel   String    @map("actor_label")
+  at           DateTime  @default(now())
+  undoneAt     DateTime? @map("undone_at")
+  undoneById   String?   @map("undone_by_id") @db.Uuid
+  /// On an undo row: the move it undid.
+  undoOfId     String?   @map("undo_of_id") @db.Uuid
+
+  lead Lead @relation(fields: [leadId], references: [id])
+
+  @@index([leadId, at])
+  @@map("lead_move")
 }

@@ -17,6 +17,8 @@ async function bootstrap() {
   app.set("trust proxy", 1)
   app.use(helmet())
   app.use(cookieParser())
+  // Imports send up to 5,000 rows at once.
+  app.useBodyParser("json", { limit: "15mb" })
   app.enableCors({ origin: config.frontendUrl, credentials: true })
   app.setGlobalPrefix(API_PREFIX)
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))

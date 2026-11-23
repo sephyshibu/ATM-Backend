@@ -8,6 +8,7 @@ import { AuthModule } from "./auth/auth.module"
 import { CsrfMiddleware } from "./common/csrf.middleware"
 import { SessionGuard } from "./common/guards/session.guard"
 import { HealthController } from "./health/health.controller"
+import { LeadsModule } from "./leads/leads.module"
 import { MailModule } from "./mail/mail.module"
 import { PrismaModule } from "./prisma/prisma.module"
 import { RecordsModule } from "./records/records.module"
@@ -27,6 +28,7 @@ import { UsersModule } from "./users/users.module"
     RolesModule,
     SettingsModule,
     RecordsModule,
+    LeadsModule,
   ],
   controllers: [HealthController],
   providers: [

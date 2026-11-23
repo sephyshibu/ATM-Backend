@@ -156,7 +156,7 @@ export const LISTS: ListDef[] = [
   {
     key: "disqualify_reason",
     label: "Disqualify reasons",
-    description: "Picked when a lead is disqualified.",
+    description: "Picked when a lead is disqualified, or not pursued at Register.",
     values: [
       { code: "NOT_INTERESTED", label: "Not interested" },
       { code: "NO_ASIA_PLAN", label: "No Asia plan" },

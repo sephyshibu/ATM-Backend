@@ -7,6 +7,7 @@ import type { RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { archiveData, checkCategory, checkListCode, describe, listLabels, restoreData } from "./records-common"
 import type { ArchiveDto, CreateProductDto, ProductFields, UpdateProductDto } from "./records.dto"
+import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
 import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
@@ -21,6 +22,7 @@ export class ProductsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly tags: TagsService,
+    private readonly customFields: CustomFieldsService,
   ) {}
 
   /** A brand's products with their tags, active first. */
@@ -42,6 +44,7 @@ export class ProductsService {
     if (dto.sku !== undefined) data.sku = dto.sku
     Object.assign(data, await checkCategory(db, dto, current))
     if (dto.description !== undefined) data.description = dto.description
+    if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "product", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
     return data
   }
 
@@ -49,12 +52,14 @@ export class ProductsService {
     const [cat, sub] = await Promise.all(["category", "sub_category"].map((k) => listLabels(db, k)))
     const label = (m: Map<string, string>) => (v: unknown) => (v ? (m.get(v as string) ?? String(v)) : "Same as brand")
     const pick = <K extends keyof Product>(k: K) => (k in after ? after[k] : before[k])
+    const custom = after.custom !== undefined ? this.customFields.changes(await this.customFields.list("product", db), (before.custom ?? {}) as CustomValues, after.custom as CustomValues) : []
     return describe([
       { label: "Name", before: before.name, after: pick("name") },
       { label: "SKU", before: before.sku, after: pick("sku") },
       { label: "Category", before: before.categoryCode, after: pick("categoryCode"), show: label(cat) },
       { label: "Sub-category", before: before.subCategoryCode, after: pick("subCategoryCode"), show: label(sub) },
       { label: "Description", before: before.description, after: pick("description") },
+      ...custom,
     ])
   }
 

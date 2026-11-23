@@ -1,5 +1,5 @@
 import { Transform, Type } from "class-transformer"
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator"
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator"
 
 // What each Records request may send. Values are tidied and checked further in the services (domains, emails,
 // countries, list codes), so the messages people see are specific.
@@ -69,6 +69,11 @@ export class OrganisationFields {
   @ArrayMaxSize(50)
   @IsString({ each: true })
   tagCodes?: string[]
+
+  /** Values of the fields added in Settings → Fields, by field key. */
+  @IsOptional()
+  @IsObject()
+  custom?: Record<string, unknown>
 }
 
 /** `name` is required (checked in the service). */
@@ -123,6 +128,11 @@ export class BrandFields {
   @Transform(trim) @IsOptional() @IsString() @MaxLength(5000) description?: string
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(300) linkedinUrl?: string | null
 
+  /** Values of the fields added in Settings → Fields, by field key. */
+  @IsOptional()
+  @IsObject()
+  custom?: Record<string, unknown>
+
   /** Codes from the Tags list; the record's tags become exactly these. */
   @IsOptional()
   @IsArray()
@@ -164,6 +174,11 @@ export class PersonFields {
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) buyingRoleCode?: string | null
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) consentCode?: string | null
   @Transform(trim) @IsOptional() @IsString() @MaxLength(5000) notes?: string
+
+  /** Values of the fields added in Settings → Fields, by field key. */
+  @IsOptional()
+  @IsObject()
+  custom?: Record<string, unknown>
 }
 
 /** `firstName` is required (checked in the service). */
@@ -189,6 +204,11 @@ export class ProductFields {
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) categoryCode?: string | null
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) subCategoryCode?: string | null
   @Transform(trim) @IsOptional() @IsString() @MaxLength(5000) description?: string
+
+  /** Values of the fields added in Settings → Fields, by field key. */
+  @IsOptional()
+  @IsObject()
+  custom?: Record<string, unknown>
 
   /** Codes from the Tags list; the record's tags become exactly these. */
   @IsOptional()
@@ -232,4 +252,64 @@ export class ArchiveDto {
   @IsString()
   @MaxLength(500)
   reason?: string
+}
+
+export class CreateCustomFieldDto {
+  @IsIn(["organisation", "brand", "product", "person"])
+  entityType!: "organisation" | "brand" | "product" | "person"
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(1, { message: "Give the field a name." })
+  @MaxLength(80)
+  label!: string
+
+  @IsIn(["text", "long_text", "number", "date", "yes_no", "choice", "multi_choice"])
+  type!: "text" | "long_text" | "number" | "date" | "yes_no" | "choice" | "multi_choice"
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  options?: string[]
+
+  @IsOptional() @IsBoolean() required?: boolean
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(300) help?: string
+}
+
+/** The key and type of a field never change; everything else can. */
+export class UpdateCustomFieldDto {
+  @Transform(trim) @IsOptional() @IsString() @MinLength(1) @MaxLength(80) label?: string
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  options?: string[]
+
+  @IsOptional() @IsBoolean() required?: boolean
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(300) help?: string
+  @IsOptional() @IsInt() @Min(0) @Max(100000) sortOrder?: number
+}
+
+/** One row of an import: its row number in the sheet and its values by field key, after mapping. */
+export type ImportRow = { row: number; values: Record<string, unknown> }
+
+export class ImportDto {
+  @Transform(trim)
+  @IsString()
+  @MaxLength(255)
+  fileName!: string
+
+  /** Sheet column → field key, as chosen on the mapping step (kept with the import for reference). */
+  @IsOptional()
+  @IsObject()
+  mapping?: Record<string, string>
+
+  @IsArray()
+  @ArrayMaxSize(5000, { message: "One import can have up to 5,000 rows. Split the file and import it in parts." })
+  @IsObject({ each: true })
+  rows!: ImportRow[]
 }

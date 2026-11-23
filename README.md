@@ -79,6 +79,29 @@ Hierarchy: **organisation** (the legal entity ATM signs with) › **brands** ›
 category and a sub-category (Settings → Lists); a product may have its own, or takes the brand's. Tags are values
 of the Tags list, put on organisations, brands and products (`record_tag`; taking a tag off keeps the row).
 
+Imports and custom fields (after this step, once):
+
+```
+npx prisma migrate dev --name imports-fields   # adds custom_field, import_batch, and custom/import columns
+```
+
+Every import has four steps: choose the file, **map each column to a field** (built-in fields plus the custom
+fields from Settings → Fields), check (nothing is written; every rejected row gets its exact reasons), import
+(good rows are created, rejected rows are skipped and kept in `import_batch.rejected`). Brand imports create
+organisations: rows with the same organisation name go under one organisation.
+
+Leads and the journey engine (Phase 1, step 2; once):
+
+```
+npx prisma migrate dev --name leads   # adds lead and lead_move
+npx prisma db seed                    # updates a list description
+```
+
+`src/leads/journey.ts` is the journey as data: stages, side lanes, every move a person can make (with its
+permission, required reason or date, and checks) and every buyer event. `JourneyService` is the only code that
+changes a lead; every change is a `lead_move` row. Undo reverts the newest move; override forces any position with
+a reason. Imported brands get a lead at Register.
+
 Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
 ## API (all under `/api/v1`)
@@ -98,7 +121,13 @@ Lane is stored in the `routing_code` column and the `routing` list (renaming the
 | GET | `/records/organisations`, `/records/organisations/:id`, `/records/organisations/:id/history`, `/records/people`, `/records/people/:id` | records.view |
 | POST | `/records/brands`, `/records/organisations`, `/records/people`, `/records/brands/:id/people`, `/records/brands/:id/people/:personId/unlink` · PATCH the same records | records.edit |
 | POST | `/records/brands/:id/products`, `/records/tags` · PATCH `/records/products/:id` | records.edit |
+| GET | `/records/import/{brands,products}/fields` · POST `/records/import/brands/check`, `/records/import/brands`, `/records/brands/:id/products/import/check`, `/records/brands/:id/products/import` | kb.import |
+| GET | `/records/fields` · POST `/records/fields`, `/records/fields/:id/retire`, `/restore` · PATCH `/records/fields/:id` | settings.view / settings.edit |
 | POST | `/records/{brands,organisations,people,products}/:id/archive`, `.../restore` | records.archive |
+| GET | `/leads`, `/leads/journey`, `/leads/:id`, `/leads/brand/:brandId` · POST `/leads/:id/move`, `/leads/bulk-move` (each move checks its own permission) | records.view |
+| POST | `/leads/brand/:brandId` (open), `/leads/open-missing` · PATCH `/leads/:id/person` | records.edit |
+| POST | `/leads/:id/undo` | control.undo |
+| POST | `/leads/:id/override`, `/leads/:id/event` (record a buyer event by hand, for testing) | control.override |
 | GET | `/audit`, `/audit/sections` | audit.view |
 | GET | `/health` | public |
 
@@ -115,6 +144,7 @@ src/users/                invite, edit, deactivate, reactivate
 src/roles/                roles and permissions
 src/settings/             configuration values and pick-lists
 src/records/              organisations, brands, products, people, tags, brand–person links
+src/leads/                the journey (journey.ts) and the engine that moves leads
 src/audit/                the change log
 src/mail/                 invite emails (log or SMTP)
 ```

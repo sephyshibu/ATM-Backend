@@ -5,18 +5,23 @@ import { CurrentUser, RequirePermissions } from "../common/decorators"
 import { requestIp, type AppRequest, type RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { BrandsService } from "./brands.service"
+import { BUILT_IN_FIELDS, CustomFieldsService } from "./custom-fields.service"
+import { ImportService } from "./import.service"
 import { OrganisationsService } from "./organisations.service"
 import { PeopleService } from "./people.service"
 import { ProductsService } from "./products.service"
 import {
   ArchiveDto,
   CreateBrandDto,
+  CreateCustomFieldDto,
   CreateOrganisationDto,
   CreatePersonDto,
   CreateProductDto,
   CreateTagDto,
+  ImportDto,
   LinkPersonDto,
   UpdateBrandDto,
+  UpdateCustomFieldDto,
   UpdateOrganisationDto,
   UpdatePersonDto,
   UpdateProductDto,
@@ -24,7 +29,7 @@ import {
 import { TagsService } from "./tags.service"
 
 /** The pick-lists the Records screens use (retired values are included so old records still show their names). */
-const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag"]
+const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag", "disqualify_reason", "override_reason"]
 
 // Records: brands, organisations and people. Looking needs "View brands and people"; adding and
 // changing needs "Edit brands and people"; archiving and restoring needs "Archive and restore records".
@@ -38,7 +43,92 @@ export class RecordsController {
     private readonly people: PeopleService,
     private readonly products: ProductsService,
     private readonly tags: TagsService,
+    private readonly customFields: CustomFieldsService,
+    private readonly imports: ImportService,
   ) {}
+
+  // ---------------------------------------------------------------- Fields (Settings → Fields)
+
+  @Get("fields")
+  @RequirePermissions("settings.view")
+  listFields() {
+    return this.customFields.list()
+  }
+
+  /** The fields every brand and product has; shown read-only in Settings → Fields. */
+  @Get("fields/built-in")
+  @RequirePermissions("settings.view")
+  builtInFields() {
+    return BUILT_IN_FIELDS
+  }
+
+  @Post("fields")
+  @RequirePermissions("settings.edit")
+  createField(@Body() dto: CreateCustomFieldDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.customFields.create(dto, me, requestIp(req))
+  }
+
+  @Patch("fields/:id")
+  @RequirePermissions("settings.edit")
+  updateField(@Param("id", ParseUUIDPipe) id: string, @Body() dto: UpdateCustomFieldDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.customFields.update(id, dto, me, requestIp(req))
+  }
+
+  @Post("fields/:id/retire")
+  @RequirePermissions("settings.edit")
+  retireField(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.customFields.retire(id, true, me, requestIp(req))
+  }
+
+  @Post("fields/:id/restore")
+  @RequirePermissions("settings.edit")
+  restoreField(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.customFields.retire(id, false, me, requestIp(req))
+  }
+
+  // ---------------------------------------------------------------- Imports (check never writes; import writes)
+
+  @Get("imports")
+  @RequirePermissions("records.view")
+  importHistory(@Query("kind") kind?: string, @Query("brandId") brandId?: string) {
+    return this.imports.history(kind === "brands" || kind === "products" ? kind : undefined, brandId && /^[0-9a-f-]{36}$/i.test(brandId) ? brandId : undefined)
+  }
+
+  @Get("import/brands/fields")
+  @RequirePermissions("kb.import")
+  brandImportFields() {
+    return this.imports.targets("brands")
+  }
+
+  @Get("import/products/fields")
+  @RequirePermissions("kb.import")
+  productImportFields() {
+    return this.imports.targets("products")
+  }
+
+  @Post("import/brands/check")
+  @RequirePermissions("kb.import")
+  checkBrandImport(@Body() dto: ImportDto) {
+    return this.imports.checkBrands(dto)
+  }
+
+  @Post("import/brands")
+  @RequirePermissions("kb.import")
+  importBrands(@Body() dto: ImportDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.imports.importBrands(dto, me, requestIp(req))
+  }
+
+  @Post("brands/:id/products/import/check")
+  @RequirePermissions("kb.import")
+  checkProductImport(@Param("id", ParseUUIDPipe) id: string, @Body() dto: ImportDto) {
+    return this.imports.checkProducts(id, dto)
+  }
+
+  @Post("brands/:id/products/import")
+  @RequirePermissions("kb.import")
+  importProducts(@Param("id", ParseUUIDPipe) id: string, @Body() dto: ImportDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.imports.importProducts(id, dto, me, requestIp(req))
+  }
 
   /** Adds a tag to the Tags list while tagging (an existing tag with the same name is reused). */
   @Post("tags")
@@ -77,14 +167,15 @@ export class RecordsController {
   @Get("options")
   @RequirePermissions("records.view")
   async options() {
-    const [values, users] = await Promise.all([
+    const [values, users, fields] = await Promise.all([
       this.prisma.listValue.findMany({ where: { listKey: { in: LIST_KEYS } }, orderBy: [{ sortOrder: "asc" }, { label: "asc" }], include: { parent: { select: { code: true } } } }),
       this.prisma.user.findMany({ where: { status: { not: "deactivated" } }, orderBy: { name: "asc" }, select: { id: true, name: true, email: true } }),
+      this.customFields.list(),
     ])
     const lists = Object.fromEntries(
       LIST_KEYS.map((k) => [k, values.filter((v) => v.listKey === k).map((v) => ({ code: v.code, label: v.label, parentCode: v.parent?.code ?? null, retired: !!v.retiredAt }))]),
     )
-    return { lists, countries: [...COUNTRY_CODES], owners: users }
+    return { lists, countries: [...COUNTRY_CODES], owners: users, fields }
   }
 
   // ---------------------------------------------------------------- Brands

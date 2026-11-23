@@ -12,7 +12,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "records.room_only", group: "Records", label: "See room-only fields", description: "Client names and pricing history. Founders only, by default." },
 
   // Imports and knowledge base
-  { key: "kb.import", group: "Imports and knowledge base", label: "Import the Brand Register", description: "Upload the Excel register and confirm the import." },
+  { key: "kb.import", group: "Imports and knowledge base", label: "Import brands and products", description: "Upload Excel or CSV files of brands (with their organisations) and products, map the columns and confirm the import." },
   { key: "kb.enter_facts", group: "Imports and knowledge base", label: "Enter facts", description: "Fill the knowledge base with a source and a date for each fact." },
   { key: "kb.verify_facts", group: "Imports and knowledge base", label: "Verify other people's facts", description: "Check facts entered by someone else against the dossier." },
   { key: "kb.verify_own_facts", group: "Imports and knowledge base", label: "Verify own facts", description: "Verify facts you entered yourself. They are marked self-verified." },

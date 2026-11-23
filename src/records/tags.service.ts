@@ -71,21 +71,33 @@ export class TagsService {
 
   /** Adds a tag to the master list while tagging. A tag with the same name is reused instead of doubled. */
   async create(label: string, me: RequestUser, ip: string | null): Promise<TagRef> {
-    const name = label.trim().replace(/\s+/g, " ")
-    if (!name) throw badRequest("Give the tag a name.")
-    return this.prisma.$transaction(async (tx) => {
-      const same = await tx.listValue.findFirst({ where: { listKey: LIST, label: { equals: name, mode: "insensitive" } } })
+    return this.prisma.$transaction(async (tx) => (await this.ensure(tx, [label], me, ip, true))[0])
+  }
+
+  /**
+   * The tags with these names, adding any that don't exist yet (imports and the tag picker). Retired tags are
+   * refused when `refuseRetired`; otherwise they're returned as they are.
+   */
+  async ensure(db: Prisma.TransactionClient, labels: string[], me: RequestUser, ip: string | null, refuseRetired = false): Promise<TagRef[]> {
+    const out: TagRef[] = []
+    for (const raw of labels) {
+      const name = raw.trim().replace(/\s+/g, " ")
+      if (!name) throw badRequest("Give the tag a name.")
+      const same = await db.listValue.findFirst({ where: { listKey: LIST, OR: [{ label: { equals: name, mode: "insensitive" } }, { code: { equals: name, mode: "insensitive" } }] } })
       if (same) {
-        if (same.retiredAt) throw badRequest(`The tag ${same.label} is retired. Restore it in Settings → Lists to use it again.`)
-        return { code: same.code, label: same.label }
+        if (same.retiredAt && refuseRetired) throw badRequest(`The tag ${same.label} is retired. Restore it in Settings → Lists to use it again.`)
+        out.push({ code: same.code, label: same.label })
+        continue
       }
       const base = name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "TAG"
       let code = base
-      for (let n = 2; await tx.listValue.findUnique({ where: { listKey_code: { listKey: LIST, code } } }); n++) code = `${base.slice(0, 36)}_${n}`
-      const last = await tx.listValue.findFirst({ where: { listKey: LIST }, orderBy: { sortOrder: "desc" } })
-      const v = await tx.listValue.create({ data: { listKey: LIST, code, label: name, sortOrder: (last?.sortOrder ?? 0) + 10, createdById: me.id, updatedById: me.id } })
-      await this.audit.record({ actor: me, section: "Lists", action: `Added ${name} to Tags`, entityType: "list_value", entityId: v.id, after: `Code: ${code}`, ip }, tx)
-      return { code: v.code, label: v.label }
-    })
+      for (let n = 2; await db.listValue.findUnique({ where: { listKey_code: { listKey: LIST, code } } }); n++) code = `${base.slice(0, 36)}_${n}`
+      const last = await db.listValue.findFirst({ where: { listKey: LIST }, orderBy: { sortOrder: "desc" } })
+      const v = await db.listValue.create({ data: { listKey: LIST, code, label: name, sortOrder: (last?.sortOrder ?? 0) + 10, createdById: me.id, updatedById: me.id } })
+      await this.audit.record({ actor: me, section: "Lists", action: `Added ${name} to Tags`, entityType: "list_value", entityId: v.id, after: `Code: ${code}`, ip }, db)
+      out.push({ code: v.code, label: v.label })
+    }
+    return out
   }
+
 }

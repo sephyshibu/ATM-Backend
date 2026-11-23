@@ -6,6 +6,7 @@ import { badRequest, conflict, notFound } from "../common/errors"
 import type { RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { archiveData, checkCountry, checkListCode, describe, listLabels, normaliseEmail, normaliseUrl, restoreData, showCountry } from "./records-common"
+import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
 import type { ArchiveDto, CreatePersonDto, PersonFields, UpdatePersonDto } from "./records.dto"
 
 const SECTION = "Records"
@@ -25,6 +26,7 @@ export class PeopleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly customFields: CustomFieldsService,
   ) {}
 
   async list(archived: boolean, organisationId?: string) {
@@ -67,6 +69,7 @@ export class PeopleService {
     if (dto.buyingRoleCode !== undefined) data.buyingRoleCode = (await checkListCode(db, "buying_role", dto.buyingRoleCode, current?.buyingRoleCode, "Buying role")).code
     if (dto.consentCode !== undefined) data.consentCode = (await checkListCode(db, "consent_basis", dto.consentCode, current?.consentCode, "Consent")).code
     if (dto.notes !== undefined) data.notes = dto.notes
+    if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "person", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
     return data
   }
 
@@ -74,6 +77,7 @@ export class PeopleService {
     const [roles, consent] = await Promise.all([listLabels(db, "buying_role"), listLabels(db, "consent_basis")])
     const label = (m: Map<string, string>) => (v: unknown) => (v ? (m.get(v as string) ?? String(v)) : "—")
     const pick = <K extends keyof Person>(k: K) => (k in after ? after[k] : before[k])
+    const custom = after.custom !== undefined ? this.customFields.changes(await this.customFields.list("person", db), (before.custom ?? {}) as CustomValues, after.custom as CustomValues) : []
     return describe([
       { label: "First name", before: before.firstName, after: pick("firstName") },
       { label: "Last name", before: before.lastName, after: pick("lastName") },
@@ -86,6 +90,7 @@ export class PeopleService {
       { label: "Buying role", before: before.buyingRoleCode, after: pick("buyingRoleCode"), show: label(roles) },
       { label: "Consent", before: before.consentCode, after: pick("consentCode"), show: label(consent) },
       { label: "Notes", before: before.notes, after: pick("notes") },
+      ...custom,
     ])
   }
 

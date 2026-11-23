@@ -9,6 +9,7 @@ import { OrganisationsService } from "./organisations.service"
 import { ProductsService } from "./products.service"
 import { archiveData, checkCategory, checkCountries, checkCountry, checkListCode, describe, listLabels, normaliseDomain, normaliseUrl, restoreData, showCountries, showCountry, showUsd } from "./records-common"
 import type { ArchiveDto, BrandFields, CreateBrandDto, LinkPersonDto, UpdateBrandDto } from "./records.dto"
+import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
 import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
@@ -30,6 +31,7 @@ export class BrandsService {
     private readonly organisations: OrganisationsService,
     private readonly products: ProductsService,
     private readonly tags: TagsService,
+    private readonly customFields: CustomFieldsService,
   ) {}
 
   async list(archived: boolean) {
@@ -153,6 +155,7 @@ export class BrandsService {
     }
     if (dto.description !== undefined) data.description = dto.description
     if (dto.linkedinUrl !== undefined) data.linkedinUrl = normaliseUrl(dto.linkedinUrl, "LinkedIn")
+    if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "brand", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
     return data
   }
 
@@ -165,6 +168,7 @@ export class BrandsService {
     const orgName = (id: unknown) => (id ? (orgs.find((o) => o.id === id)?.name ?? "—") : "—")
     const label = (m: Map<string, string>) => (v: unknown) => (v ? (m.get(v as string) ?? String(v)) : "—")
     const pick = <K extends keyof Brand>(k: K) => (k in after ? after[k] : before[k])
+    const custom = after.custom !== undefined ? this.customFields.changes(await this.customFields.list("brand", db), (before.custom ?? {}) as CustomValues, after.custom as CustomValues) : []
     return describe([
       { label: "Name", before: before.name, after: pick("name") },
       { label: "Organisation", before: before.organisationId, after: pick("organisationId"), show: orgName },
@@ -180,6 +184,7 @@ export class BrandsService {
       { label: "Owner", before: before.ownerId, after: pick("ownerId"), show: ownerName },
       { label: "Description", before: before.description, after: pick("description") },
       { label: "LinkedIn", before: before.linkedinUrl, after: pick("linkedinUrl") },
+      ...custom,
     ])
   }
 

@@ -7,6 +7,7 @@ import type { RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { archiveData, checkCountry, checkListCode, describe, normaliseDomain, normaliseUrl, restoreData, showCountry } from "./records-common"
 import type { ArchiveDto, CreateOrganisationDto, UpdateOrganisationDto } from "./records.dto"
+import { CustomFieldsService, showCustom, type CustomValues } from "./custom-fields.service"
 import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
@@ -21,6 +22,7 @@ export class OrganisationsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly tags: TagsService,
+    private readonly customFields: CustomFieldsService,
   ) {}
 
   async list(archived: boolean) {
@@ -75,6 +77,7 @@ export class OrganisationsService {
     } else if (dto.exclusionReason !== undefined && current?.excluded && dto.exclusionReason.trim()) {
       data.exclusionReason = dto.exclusionReason.trim()
     }
+    if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "organisation", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
     return data
   }
 
@@ -100,6 +103,13 @@ export class OrganisationsService {
     return (await db.organisation.findUnique({ where: { id }, select: { name: true } }))?.name ?? null
   }
 
+  /** "Field: value" lines for an organisation's own fields, for the change log. */
+  private async customLines(db: Prisma.TransactionClient, values: unknown) {
+    const v = (values ?? {}) as CustomValues
+    const fields = await this.customFields.list("organisation", db)
+    return fields.filter((f) => v[f.key] !== undefined && v[f.key] !== null).map((f) => `${f.label}: ${showCustom(v[f.key])}`)
+  }
+
   /** Inside a caller's transaction (adding a brand can make its organisation). */
   async createIn(db: Prisma.TransactionClient, dto: CreateOrganisationDto, me: RequestUser, ip: string | null) {
     if (!dto.name?.trim()) throw badRequest("Give the organisation a name.")
@@ -114,7 +124,7 @@ export class OrganisationsService {
         action: `Added the organisation ${o.name}`,
         entityType: "organisation",
         entityId: o.id,
-        after: [o.domain && `Website: ${o.domain}`, o.hqCountry && `Head office: ${showCountry(o.hqCountry)}`, parentName && `Parent group: ${parentName}`, o.legalEntity && `Legal entity: ${o.legalEntity}`, o.excluded && "Excluded", t && `Tags: ${t.after}`].filter(Boolean).join("\n") || null,
+        after: [o.domain && `Website: ${o.domain}`, o.hqCountry && `Head office: ${showCountry(o.hqCountry)}`, parentName && `Parent group: ${parentName}`, o.legalEntity && `Legal entity: ${o.legalEntity}`, o.excluded && "Excluded", t && `Tags: ${t.after}`, ...(await this.customLines(db, o.custom))].filter(Boolean).join("\n") || null,
         reason: o.excluded ? o.exclusionReason : null,
         ip,
       },
@@ -145,6 +155,7 @@ export class OrganisationsService {
         { label: "Legal entity", before: o.legalEntity, after: data.legalEntity !== undefined ? data.legalEntity : o.legalEntity },
         { label: "Exclusion", before: o.excluded, after: data.excluded ?? o.excluded, show: (v) => (v ? "Excluded" : "Not excluded") },
         { label: "Exclusion reason", before: o.exclusionReason, after: data.exclusionReason !== undefined ? data.exclusionReason : o.exclusionReason },
+        ...(data.custom !== undefined ? this.customFields.changes(await this.customFields.list("organisation", tx), o.custom as CustomValues, data.custom as CustomValues) : []),
       ])
       const t = await this.tags.set(tx, "organisation", id, dto.tagCodes, me)
       if (t) Object.assign(d, TagsService.merge(d, t))
