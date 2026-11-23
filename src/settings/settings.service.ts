@@ -38,6 +38,18 @@ function validate(def: SettingDefinition, value: unknown): string | number | boo
       const s = String(value ?? "").trim()
       if (!s) throw badRequest(`${def.label} can't be empty.`)
       if (s.length > 200) throw badRequest(`${def.label} is too long.`)
+      if (def.key === "company.timezone") {
+        try {
+          new Intl.DateTimeFormat("en", { timeZone: s })
+        } catch {
+          throw badRequest(`${s} isn't a time zone. Use a name like Asia/Kolkata or Europe/London.`)
+        }
+      }
+      if (def.key === "company.work_days") {
+        const days = s.split(",").map((d) => d.trim())
+        if (!days.length || days.some((d) => !/^[1-7]$/.test(d)) || new Set(days).size !== days.length) throw badRequest("Working days: numbers 1 (Monday) to 7 (Sunday), separated by commas, e.g. 1,2,3,4,5.")
+        return [...days].sort().join(",")
+      }
       return s
     }
   }

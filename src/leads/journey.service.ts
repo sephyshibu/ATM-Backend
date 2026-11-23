@@ -7,7 +7,7 @@ import { AuditService } from "../audit/audit.service"
 import { badRequest, conflict, forbidden, notFound } from "../common/errors"
 import { actorLabel, type RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
-import { EVENTS, FLAG_LABELS, isClosed, LANE_LABELS, LANES, MOVES, type Lane, type MoveDef, type Pos, posLabel, STAGE_LABELS, STAGES, type Stage } from "./journey"
+import { EVENTS, FLAG_LABELS, isClosed, LANE_LABELS, LANES, moveLabel, MOVES, type Lane, type MoveDef, type Pos, posLabel, STAGE_LABELS, STAGES, type Stage } from "./journey"
 import type { EventDto, MoveDto, OpenLeadDto, OverrideDto, UndoDto } from "./leads.dto"
 
 // The journey engine: the only code that changes a lead's stage, lane or flags. Every change is checked against
@@ -101,7 +101,7 @@ export class JourneyService {
       toUntil: showDate(m.toUntil),
       from: m.fromStage ? posLabel({ stage: m.fromStage, lane: m.fromLane }) : null,
       to: posLabel({ stage: m.toStage, lane: m.toLane }),
-      label: m.kind === "undo" ? "Undo" : m.kind === "override" ? "Override" : (MOVES.find((x) => x.key === m.moveKey)?.label ?? EVENTS.find((e) => `event.${e.type}` === m.moveKey)?.label ?? (m.moveKey === "open" ? "Lead opened" : m.moveKey)),
+      label: moveLabel(m.moveKey),
     }
   }
 
@@ -193,7 +193,7 @@ export class JourneyService {
       {
         actor: move.by ?? { label: move.actorLabel },
         section: SECTION,
-        action: `${l.brand.name}: ${move.kind === "undo" ? "undid the last move" : move.kind === "override" ? "override" : (MOVES.find((m) => m.key === move.moveKey)?.label ?? EVENTS.find((e) => `event.${e.type}` === move.moveKey)?.label ?? move.moveKey)}`,
+        action: `${l.brand.name}: ${move.kind === "undo" ? "undid the last move" : moveLabel(move.moveKey)}`,
         entityType: "lead",
         entityId: l.id,
         before,
@@ -370,6 +370,63 @@ export class JourneyService {
       await this.audit.record({ actor: me, section: SECTION, action: `${l.brand.name}: changed the lead's main contact`, entityType: "lead", entityId: id, before: nameOf(l.personId), after: nameOf(personId), ip }, tx)
     })
     return this.get(id, me)
+  }
+
+  // ---------------------------------------------------------------- Date rules (the daily lane check)
+
+  /**
+   * Applies the date rules for `today` (a local date in the company time zone): Nurture, Parked and On hold come
+   * back on their date; Watch moves to Nurture after `watchDays`; Rested is flagged after `restMonths`. Each rule
+   * applies once per lead per day (keyed), so running it twice changes nothing. Returns a one-line summary.
+   */
+  async runTimers(today: string, watchDays: number, restMonths: number) {
+    const day = new Date(`${today}T00:00:00Z`)
+    const watchCutoff = new Date(day.getTime() - watchDays * 86_400_000)
+    const restCutoff = new Date(day)
+    restCutoff.setUTCMonth(restCutoff.getUTCMonth() - restMonths)
+    const due = await this.prisma.lead.findMany({
+      where: {
+        closedAt: null,
+        OR: [
+          { lane: { in: ["nurture", "parked", "on_hold"] }, laneUntil: { lte: day } },
+          { lane: "watch", stageChangedAt: { lte: watchCutoff } },
+          { lane: "rested", stageChangedAt: { lte: restCutoff }, NOT: { flags: { has: "eligible_again" } } },
+        ],
+      },
+      select: { id: true, lane: true },
+    })
+    const counts: Record<string, number> = {}
+    const errors: string[] = []
+    for (const d of due) {
+      const rule = d.lane === "nurture" ? "nurture_due" : d.lane === "parked" ? "parked_due" : d.lane === "on_hold" ? "hold_due" : d.lane === "watch" ? "watch_due" : "rest_over"
+      try {
+        const moved = await this.prisma.$transaction((tx) => this.timerIn(tx, d.id, rule, today))
+        if (moved) counts[rule] = (counts[rule] ?? 0) + 1
+      } catch (e) {
+        errors.push(`${d.id}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    if (errors.length) throw new Error(`${errors.length} of ${due.length} leads failed: ${errors.slice(0, 3).join("; ")}`)
+    const parts = Object.entries(counts).map(([k, n]) => `${n} × ${moveLabel(`timer.${k}`)}`)
+    return parts.length ? parts.join("; ") : "Nothing due today."
+  }
+
+  private async timerIn(db: Db, id: string, rule: string, today: string) {
+    const eventKey = `timer:${rule}:${id}:${today}`
+    if (await db.leadMove.findUnique({ where: { eventKey } })) return false
+    const l = await this.lock(db, id)
+    const from = pos(l)
+    let to: Pos = from
+    let flags = l.flags
+    if (rule === "nurture_due" && from.lane === "nurture") to = { ...from, lane: null }
+    else if (rule === "parked_due" && from.lane === "parked") to = { stage: "register", lane: null }
+    else if (rule === "hold_due" && from.lane === "on_hold") to = { ...from, lane: null }
+    else if (rule === "watch_due" && from.lane === "watch") to = { ...from, lane: "nurture" }
+    else if (rule === "rest_over" && from.lane === "rested" && !l.flags.includes("eligible_again")) flags = [...l.flags, "eligible_again"]
+    else return false
+    if (to.lane !== "rested") flags = flags.filter((f) => f !== "eligible_again")
+    await this.apply(db, l, to, flags, null, { moveKey: `timer.${rule}`, kind: "system", eventKey, actorId: null, actorLabel: "System (daily lane check)", by: null }, null)
+    return true
   }
 
   /** The journey for the screens: stages, lanes and labels. */

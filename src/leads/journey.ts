@@ -29,6 +29,7 @@ export const FLAG_LABELS: Record<string, string> = {
   reply_received: "Reply received: mark its outcome",
   no_signer: "No signer named: check before the call",
   override: "Moved by override",
+  eligible_again: "Rest is over: it can start again",
 }
 
 export type Pos = { stage: Stage; lane: Lane | null }
@@ -125,3 +126,22 @@ export const EVENTS: EventDef[] = [
   { type: "booking_cancelled", label: "Booking cancelled", from: at("hot"), to: () => ({ stage: "warm", lane: null }), clear: ["no_signer"] },
   { type: "no_show", label: "No-show", from: at("hot"), to: () => ({ stage: "warm", lane: null }), clear: ["no_signer"] },
 ]
+
+/** Date rules the daily lane check applies (job lanes.tick). */
+export const TIMERS: Record<string, string> = {
+  nurture_due: "Nurture date reached: back to its stage",
+  parked_due: "Recheck date reached: back to Register",
+  hold_due: "Hold date reached: resumed",
+  watch_due: "Days in Watch reached: moved to Nurture",
+  rest_over: "Rest is over: flagged to start again",
+}
+
+/** The name of a move, an event or a timer, as the history shows it. */
+export function moveLabel(key: string) {
+  if (key === "open") return "Lead opened"
+  if (key === "undo") return "Undo"
+  if (key === "override") return "Override"
+  if (key.startsWith("timer.")) return TIMERS[key.slice(6)] ?? key
+  if (key.startsWith("event.")) return EVENTS.find((e) => e.type === key.slice(6))?.label ?? key
+  return MOVES.find((m) => m.key === key)?.label ?? key
+}

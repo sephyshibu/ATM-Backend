@@ -102,6 +102,17 @@ permission, required reason or date, and checks) and every buyer event. `Journey
 changes a lead; every change is a `lead_move` row. Undo reverts the newest move; override forces any position with
 a reason. Imported brands get a lead at Register.
 
+Background jobs and the scheduler (Phase 1, step 3; once):
+
+```
+npx prisma migrate dev --name jobs   # adds the job table
+npx prisma db seed                   # adds Working time and Background jobs settings, and Lists → Holidays
+```
+
+`src/jobs/` has the job queue and scheduler (in PostgreSQL, no Redis), and `clock.ts` for time zones and working
+time. The worker runs inside the app; set `JOBS_WORKER=off` on an instance that shouldn't run jobs. Settings → Jobs
+shows the schedules, recent jobs (with results, errors and retries) and the working-time check.
+
 Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
 ## API (all under `/api/v1`)
@@ -128,6 +139,8 @@ Lane is stored in the `routing_code` column and the `routing` list (renaming the
 | POST | `/leads/brand/:brandId` (open), `/leads/open-missing` · PATCH `/leads/:id/person` | records.edit |
 | POST | `/leads/:id/undo` | control.undo |
 | POST | `/leads/:id/override`, `/leads/:id/event` (record a buyer event by hand, for testing) | control.override |
+| GET | `/jobs`, `/jobs/calendar` | settings.view |
+| POST | `/jobs/schedules/:name/run`, `/jobs/:id/retry`, `/jobs/test` | settings.edit |
 | GET | `/audit`, `/audit/sections` | audit.view |
 | GET | `/health` | public |
 
@@ -144,7 +157,8 @@ src/users/                invite, edit, deactivate, reactivate
 src/roles/                roles and permissions
 src/settings/             configuration values and pick-lists
 src/records/              organisations, brands, products, people, tags, brand–person links
-src/leads/                the journey (journey.ts) and the engine that moves leads
+src/leads/                the journey (journey.ts), the engine that moves leads, and the daily lane check
+src/jobs/                 job queue, scheduler, working-time clock
 src/audit/                the change log
 src/mail/                 invite emails (log or SMTP)
 ```

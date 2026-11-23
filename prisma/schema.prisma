@@ -577,3 +577,36 @@ model LeadMove {
   @@index([leadId, at])
   @@map("lead_move")
 }
+
+// ---------------------------------------------------------------- Background jobs
+
+/// The job queue, in PostgreSQL (no Redis needed at ATM's volumes). A worker claims due jobs one at a time
+/// (FOR UPDATE SKIP LOCKED, so several app instances never run the same job), retries failures with a growing
+/// wait, and keeps every job with its result or error. Scheduled runs use `unique_key` so each run happens once.
+model Job {
+  id          String    @id @default(uuid()) @db.Uuid
+  /// What to run, e.g. lanes.tick.
+  name        String
+  payload     Json      @default("{}")
+  /// queued | running | done | failed (will retry) | dead (gave up)
+  status      String    @default("queued")
+  runAt       DateTime  @default(now()) @map("run_at")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  /// e.g. lanes.tick:2026-11-23, so a scheduled run is queued once however many app instances there are.
+  uniqueKey   String?   @unique @map("unique_key")
+  /// The handler's summary when it finished, e.g. "3 leads back from Nurture".
+  result      String?
+  lastError   String?   @map("last_error")
+  lockedAt    DateTime? @map("locked_at")
+  lockedBy    String?   @map("locked_by")
+  startedAt   DateTime? @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  /// Who queued it by hand (Run now, Retry), if anyone.
+  createdById String?   @map("created_by_id") @db.Uuid
+
+  @@index([status, runAt])
+  @@index([name, createdAt])
+  @@map("job")
+}

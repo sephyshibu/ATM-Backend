@@ -45,6 +45,14 @@ export const SETTINGS: SettingDef[] = [
   { key: "gates.revenue_min_usd", group: "Gates", label: "Gate 02: home revenue from", description: "Lower end of the target band.", type: "integer", unit: "USD", min: 0, max: 1_000_000_000, default: 5_000_000 },
   { key: "gates.revenue_max_usd", group: "Gates", label: "Gate 02: home revenue up to", description: "Upper end of the target band.", type: "integer", unit: "USD", min: 0, max: 1_000_000_000, default: 50_000_000 },
 
+  // Working time (clocks count only working hours and days)
+  { key: "company.work_days", group: "Working time", label: "Working days", description: "1 = Monday … 7 = Sunday, separated by commas. Holidays are in Lists → Holidays.", type: "text", default: "1,2,3,4,5" },
+  { key: "company.work_start", group: "Working time", label: "Working day starts at", description: "In the company time zone.", type: "time", default: "09:00" },
+  { key: "company.work_end", group: "Working time", label: "Working day ends at", description: "In the company time zone.", type: "time", default: "18:00" },
+
+  // Background jobs
+  { key: "jobs.lanes_tick_time", group: "Background jobs", label: "Check side-lane dates daily at", description: "Leads come back from Nurture, Parked and On hold on their date; Watch moves to Nurture; Rested brands are flagged when their rest is over. In the company time zone.", type: "time", default: "06:00" },
+
   // Company
   { key: "company.timezone", group: "Company", label: "Company time zone", description: "For the weekly batch and company-wide dates. Each person's clocks follow their own time zone.", type: "text", default: "Asia/Kolkata" },
 ]
@@ -180,6 +188,12 @@ export const LISTS: ListDef[] = [
     key: "tag",
     label: "Tags",
     description: "Free labels for organisations, brands and products (e.g. Halal, Vegan, Trade show 2026). Anyone who can edit records can add a new tag while tagging; rename or retire them here.",
+    values: [],
+  },
+  {
+    key: "holidays",
+    label: "Holidays",
+    description: "Days off: clocks and working-day counts skip them. Start each name with the date, e.g. 2026-12-25 Christmas.",
     values: [],
   },
   {
