@@ -69,6 +69,14 @@ export class AuditService {
     }
   }
 
+  /** The history of several records together (a brand, its company and its people), newest first. */
+  async forEntities(groups: { type: string; ids: string[] }[], limit = 200) {
+    const OR = groups.filter((g) => g.ids.length).map((g) => ({ entityType: g.type, entityId: { in: g.ids } }))
+    if (!OR.length) return []
+    const rows = await this.prisma.auditEvent.findMany({ where: { OR }, orderBy: { id: "desc" }, take: limit })
+    return rows.map((e) => ({ ...e, id: e.id.toString() }))
+  }
+
   async sections() {
     const rows = await this.prisma.auditEvent.findMany({ distinct: ["section"], select: { section: true }, orderBy: { section: "asc" } })
     return rows.map((r) => r.section)

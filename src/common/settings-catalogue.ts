@@ -65,7 +65,7 @@ export const LISTS: ListDef[] = [
   {
     key: "sub_category",
     label: "Sub-categories",
-    description: "Each sits under a category. The template is picked by category + sub-category + routing, falling back to the category template.",
+    description: "Each sits under a category. The template is picked by category + sub-category + lane, falling back to the category template.",
     parent: "category",
     values: [
       { code: "HW_VITAMINS", label: "Vitamins and supplements", parent: "HW" },
@@ -85,12 +85,44 @@ export const LISTS: ListDef[] = [
   },
   {
     key: "routing",
-    label: "Routing",
-    description: "Set by gate 03 (Asia position).",
+    label: "Lanes",
+    description: "The route a brand takes: Entry (new to Asia), Expansion (already in an Asian market), Re-entry (was in Asia and left). Each lane will get its own template of deliverables and plan at onboarding. Stored under the key \"routing\".",
     values: [
       { code: "ENTRY", label: "Entry" },
       { code: "EXPANSION", label: "Expansion" },
       { code: "REENTRY", label: "Re-entry" },
+    ],
+  },
+  {
+    key: "tier",
+    label: "Brand tiers",
+    description: "How much attention a brand gets. Needed before Target.",
+    values: [
+      { code: "T1", label: "Tier 1" },
+      { code: "T2", label: "Tier 2" },
+      { code: "T3", label: "Tier 3" },
+    ],
+  },
+  {
+    key: "buying_role",
+    label: "Buying roles",
+    description: "A person's part in the decision.",
+    values: [
+      { code: "SIGNER", label: "Signer" },
+      { code: "OWNER", label: "Owner of the Asia plan" },
+      { code: "CHAMPION", label: "Champion" },
+      { code: "INFLUENCER", label: "Influencer" },
+      { code: "OTHER", label: "Other" },
+    ],
+  },
+  {
+    key: "consent_basis",
+    label: "Consent to contact",
+    description: "Why ATM may email a person (PDPA and GDPR).",
+    values: [
+      { code: "LEGITIMATE_INTEREST", label: "Legitimate interest" },
+      { code: "CONSENTED", label: "Gave consent" },
+      { code: "UNKNOWN", label: "Not checked yet" },
     ],
   },
   {
@@ -136,6 +168,18 @@ export const LISTS: ListDef[] = [
       { code: "MISSING_FIELD", label: "A merge field is empty" },
       { code: "STALE_FACTS", label: "Facts need checking again" },
       { code: "TIMING", label: "Not the right week" },
+      { code: "OTHER", label: "Other" },
+    ],
+  },
+  {
+    key: "archive_reason",
+    label: "Archive reasons",
+    description: "Picked when a brand, company or person is archived.",
+    values: [
+      { code: "DUPLICATE", label: "Duplicate record" },
+      { code: "CLOSED", label: "Company closed or merged" },
+      { code: "LEFT", label: "Person left the company" },
+      { code: "WRONG", label: "Added by mistake" },
       { code: "OTHER", label: "Other" },
     ],
   },

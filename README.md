@@ -56,6 +56,19 @@ Then start the frontend (`../ATM Frontend`, `npm run dev`) and open http://local
 - Configuration changes add a **new version**; the earlier values stay in the history.
 - `audit_event` is **append-only**: a database trigger refuses UPDATE and DELETE (installed at every start-up, `src/prisma/db-hardening.ts`).
 - Database structure changes only add tables or optional columns, through new Prisma migrations.
+- Records (brands, companies, people) are **archived**, never deleted. Unlinking a person from a brand keeps the old link (`removed_at`). A brand's website must be unique among brands, so duplicates are caught when adding.
+
+## Records (Phase 1, step 1)
+
+After pulling this step, once:
+
+```
+npx prisma migrate dev --name records   # adds organisation, brand, person, brand_person
+npx prisma db seed                      # adds the tier, buying role, consent and archive-reason lists; renames Routing to Lanes
+npx prisma migrate dev --name company-group   # adds parent group, legal entity and exclusion to companies
+```
+
+Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
 ## API (all under `/api/v1`)
 
@@ -70,6 +83,10 @@ Then start the frontend (`../ATM Frontend`, `npm run dev`) and open http://local
 | POST | `/roles`, `/roles/:id/archive`, `/roles/:id/restore` · PATCH `/roles/:id` | roles.manage |
 | GET | `/settings/config`, `/settings/config/:key/history`, `/settings/lists` | settings.view |
 | PUT | `/settings/config/:key` · POST `/settings/lists/:key/values`, `/settings/list-values/:id/retire`, `/restore` · PATCH `/settings/list-values/:id` | settings.edit |
+| GET | `/records/options`, `/records/brands`, `/records/brands/check`, `/records/brands/:id`, `/records/brands/:id/history` | records.view |
+| GET | `/records/organisations`, `/records/organisations/:id`, `/records/organisations/:id/history`, `/records/people`, `/records/people/:id` | records.view |
+| POST | `/records/brands`, `/records/organisations`, `/records/people`, `/records/brands/:id/people`, `/records/brands/:id/people/:personId/unlink` · PATCH the same records | records.edit |
+| POST | `/records/{brands,organisations,people}/:id/archive`, `.../restore` | records.archive |
 | GET | `/audit`, `/audit/sections` | audit.view |
 | GET | `/health` | public |
 
@@ -85,6 +102,7 @@ src/auth/                 Google sign-in, sessions, access (permissions)
 src/users/                invite, edit, deactivate, reactivate
 src/roles/                roles and permissions
 src/settings/             configuration values and pick-lists
+src/records/              brands, companies (organisations), people, brand–person links
 src/audit/                the change log
 src/mail/                 invite emails (log or SMTP)
 ```

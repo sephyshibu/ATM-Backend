@@ -10,6 +10,7 @@ import { SessionGuard } from "./common/guards/session.guard"
 import { HealthController } from "./health/health.controller"
 import { MailModule } from "./mail/mail.module"
 import { PrismaModule } from "./prisma/prisma.module"
+import { RecordsModule } from "./records/records.module"
 import { RolesModule } from "./roles/roles.module"
 import { SettingsModule } from "./settings/settings.module"
 import { UsersModule } from "./users/users.module"
@@ -25,6 +26,7 @@ import { UsersModule } from "./users/users.module"
     UsersModule,
     RolesModule,
     SettingsModule,
+    RecordsModule,
   ],
   controllers: [HealthController],
   providers: [
