@@ -303,6 +303,11 @@ export class ImportDto {
   @MaxLength(255)
   fileName!: string
 
+  /** Brands already in Records (same website): skip them (rejected) or update them from the file. */
+  @IsOptional()
+  @IsIn(["skip", "update"])
+  mode?: "skip" | "update"
+
   /** Sheet column → field key, as chosen on the mapping step (kept with the import for reference). */
   @IsOptional()
   @IsObject()
@@ -312,4 +317,11 @@ export class ImportDto {
   @ArrayMaxSize(5000, { message: "One import can have up to 5,000 rows. Split the file and import it in parts." })
   @IsObject({ each: true })
   rows!: ImportRow[]
+}
+
+export class SaveMappingDto {
+  @Transform(trim) @IsString() @MinLength(1, { message: "Name the mapping, e.g. Brand Register v3." }) @MaxLength(80) name!: string
+  @IsArray() @ArrayMaxSize(300) @IsString({ each: true }) @MaxLength(200, { each: true }) headers!: string[]
+  /** File heading → field key. */
+  @IsObject() mapping!: Record<string, string>
 }

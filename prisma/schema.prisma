@@ -486,6 +486,27 @@ model CustomField {
   @@map("custom_field")
 }
 
+/// A saved column mapping for imports (e.g. "Brand Register v3"): which file heading goes to which field. Picked
+/// automatically when a file has the same headings. Retired, never deleted.
+model ImportMapping {
+  id          String    @id @default(uuid()) @db.Uuid
+  /// brands | products
+  kind        String
+  name        String
+  /// The file's headings when it was saved, to recognise the same register next time.
+  headers     String[]  @default([])
+  /// File heading → field key.
+  mapping     Json      @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  createdById String?   @map("created_by_id") @db.Uuid
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  retiredAt   DateTime? @map("retired_at")
+
+  @@unique([kind, name])
+  @@map("import_mapping")
+}
+
 /// One Excel or CSV import: what was mapped, how many rows came in, and every rejected row with its reasons.
 model ImportBatch {
   id            String   @id @default(uuid()) @db.Uuid

@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req } 
 
 import { COUNTRY_CODES } from "../common/countries"
 import { CurrentUser, RequirePermissions } from "../common/decorators"
+import { badRequest } from "../common/errors"
 import { requestIp, type AppRequest, type RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { BrandsService } from "./brands.service"
@@ -19,6 +20,7 @@ import {
   CreateProductDto,
   CreateTagDto,
   ImportDto,
+  SaveMappingDto,
   LinkPersonDto,
   UpdateBrandDto,
   UpdateCustomFieldDto,
@@ -92,6 +94,26 @@ export class RecordsController {
   @RequirePermissions("records.view")
   importHistory(@Query("kind") kind?: string, @Query("brandId") brandId?: string) {
     return this.imports.history(kind === "brands" || kind === "products" ? kind : undefined, brandId && /^[0-9a-f-]{36}$/i.test(brandId) ? brandId : undefined)
+  }
+
+  @Get("import/:kind/mappings")
+  @RequirePermissions("kb.import")
+  importMappings(@Param("kind") kind: string) {
+    if (kind !== "brands" && kind !== "products") throw badRequest("Imports are brands or products.")
+    return this.imports.mappings(kind)
+  }
+
+  @Post("import/:kind/mappings")
+  @RequirePermissions("kb.import")
+  saveImportMapping(@Param("kind") kind: string, @Body() dto: SaveMappingDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    if (kind !== "brands" && kind !== "products") throw badRequest("Imports are brands or products.")
+    return this.imports.saveMapping(kind, dto, me, requestIp(req))
+  }
+
+  @Post("import/mappings/:id/retire")
+  @RequirePermissions("kb.import")
+  retireImportMapping(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.imports.retireMapping(id, me, requestIp(req))
   }
 
   @Get("import/brands/fields")

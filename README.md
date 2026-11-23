@@ -113,6 +113,11 @@ npx prisma db seed                   # adds Working time and Background jobs set
 time. The worker runs inside the app; set `JOBS_WORKER=off` on an instance that shouldn't run jobs. Settings → Jobs
 shows the schedules, recent jobs (with results, errors and retries) and the working-time check.
 
+Brand Register import (Phase 2, step 4; once): `npx prisma migrate dev --name import-mappings` adds
+`import_mapping` (saved column mappings, picked automatically for files with the same headings). Brand rows can
+carry a main and a second contact; brands already in Records are skipped or, in "update" mode, filled from the
+row's non-empty cells. Gate values join the import in step 5.
+
 Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
 ## API (all under `/api/v1`)
