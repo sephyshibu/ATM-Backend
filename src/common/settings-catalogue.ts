@@ -57,6 +57,19 @@ export const SETTINGS: SettingDef[] = [
   { key: "company.timezone", group: "Company", label: "Company time zone", description: "For the weekly batch and company-wide dates. Each person's clocks follow their own time zone.", type: "text", default: "Asia/Kolkata" },
 ]
 
+/** The six gates (design: "Gates and recommendations"). The seed creates them once; names, descriptions and
+ *  on/off are then edited in Settings → Gates. Desk gates decide Target; call gates are confirmed after the call. */
+export type GateDef = { code: string; name: string; checks: string; stage: "desk" | "call"; rule: "category" | "revenue_band" | "lane" | null }
+
+export const GATES: GateDef[] = [
+  { code: "01", name: "Category", checks: "The brand is in a category ATM works in (health supplements, functional food, beauty, pet nutrition).", stage: "desk", rule: "category" },
+  { code: "02", name: "Home revenue", checks: "Home-market revenue is inside the target band (Configuration → Gates).", stage: "desk", rule: "revenue_band" },
+  { code: "03", name: "Asia position", checks: "Asia is a live plan; it sets the lane (Entry, Expansion or Re-entry).", stage: "desk", rule: "lane" },
+  { code: "04", name: "Funded and dated", checks: "A budget exists and there is a date.", stage: "call", rule: null },
+  { code: "05", name: "Named owner", checks: "A named person owns the Asia plan.", stage: "call", rule: null },
+  { code: "06", name: "Signer reachable", checks: "The person who signs was on the call or is named.", stage: "call", rule: null },
+]
+
 export type ListDef = { key: string; label: string; description: string; parent?: string; values: { code: string; label: string; parent?: string }[] }
 
 export const LISTS: ListDef[] = [
@@ -147,6 +160,8 @@ export const LISTS: ListDef[] = [
       { code: "REGISTER_WRONG", label: "Register value was wrong" },
       { code: "CALL_CONFIRMED", label: "Confirmed on the call" },
       { code: "CALL_CONTRADICTED", label: "Contradicted on the call" },
+      { code: "IMPORT", label: "Brand Register import" },
+      { code: "NOT_NEEDED", label: "Not needed for this brand" },
       { code: "OTHER", label: "Other" },
     ],
   },

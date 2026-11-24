@@ -10,6 +10,8 @@ import { ProductsService } from "./products.service"
 import { archiveData, checkCategory, checkCountries, checkCountry, checkListCode, describe, listLabels, normaliseDomain, normaliseUrl, restoreData, showCountries, showCountry, showUsd } from "./records-common"
 import type { ArchiveDto, BrandFields, CreateBrandDto, LinkPersonDto, UpdateBrandDto } from "./records.dto"
 import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
+import { GatesService } from "../leads/gates.service"
+import { JourneyService } from "../leads/journey.service"
 import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
@@ -32,6 +34,8 @@ export class BrandsService {
     private readonly products: ProductsService,
     private readonly tags: TagsService,
     private readonly customFields: CustomFieldsService,
+    private readonly journey: JourneyService,
+    private readonly gates: GatesService,
   ) {}
 
   async list(archived: boolean) {
@@ -205,6 +209,9 @@ export class BrandsService {
       const t = await this.tags.set(tx, "brand", b.id, dto.tagCodes, me)
       const d = TagsService.merge(await this.changes({}, b, tx), t)
       await this.audit.record({ actor: me, section: SECTION, action: `Added the brand ${b.name}`, entityType: "brand", entityId: b.id, after: d.after || null, ip }, tx)
+      // Every new brand starts its journey at Register, like an imported one (not for excluded organisations).
+      const org = await tx.organisation.findUnique({ where: { id: b.organisationId }, select: { excluded: true } })
+      if (!org?.excluded) await this.journey.openIn(tx, b.id, {}, me, ip)
       return b.id
     })
     return this.get(id)
@@ -227,6 +234,8 @@ export class BrandsService {
       if (!d.changed) return
       await tx.brand.update({ where: { id }, data: { ...data, updatedById: me.id } })
       await this.audit.record({ actor: me, section: SECTION, action: `Changed the brand ${(data.name as string) ?? b.name}`, entityType: "brand", entityId: id, before: d.before, after: d.after, ip }, tx)
+      // Gates 01–03 that nobody has set by hand follow the brand's details (category, revenue, lane).
+      await this.gates.syncBrand(tx, id)
     })
     return this.get(id)
   }

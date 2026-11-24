@@ -118,6 +118,18 @@ Brand Register import (Phase 2, step 4; once): `npx prisma migrate dev --name im
 carry a main and a second contact; brands already in Records are skipped or, in "update" mode, filled from the
 row's non-empty cells. Gate values join the import in step 5.
 
+Gates and the recommendation (Phase 2, step 5; once):
+
+```
+npx prisma migrate dev --name gates   # adds gate_definition, gate_result, gate_change; decision columns on lead_move
+npx prisma db seed                    # creates the six gates and two gate-change reasons
+```
+
+Every lead has the six gates as a checklist (pass / fail / unknown, or unticked as not needed, with a reason).
+The Brand Register import fills them from the gate columns. `GatesService` makes the recommendation (desk:
+Pursue / Review / Not now; call: SQL / Verification pending / Not now); a decision against it is allowed but
+needs an override reason and is flagged on the lead and its move.
+
 Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
 ## API (all under `/api/v1`)
@@ -146,6 +158,8 @@ Lane is stored in the `routing_code` column and the `routing` list (renaming the
 | POST | `/leads/:id/override`, `/leads/:id/event` (record a buyer event by hand, for testing) | control.override |
 | GET | `/jobs`, `/jobs/calendar` | settings.view |
 | POST | `/jobs/schedules/:name/run`, `/jobs/:id/retry`, `/jobs/test` | settings.edit |
+| GET | `/leads/:id/gates` · PATCH `/leads/:id/gates/:code` (desk or call gate permission) | records.view |
+| GET | `/gates` · PATCH `/gates/:code` | settings.view / settings.edit |
 | GET | `/audit`, `/audit/sections` | audit.view |
 | GET | `/health` | public |
 

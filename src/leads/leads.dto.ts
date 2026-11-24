@@ -1,5 +1,5 @@
 import { Transform } from "class-transformer"
-import { ArrayMaxSize, IsArray, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator"
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator"
 
 const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value)
 const emptyToNull = ({ value }: { value: unknown }) => (typeof value === "string" && value.trim() === "" ? null : value)
@@ -16,6 +16,9 @@ export class MoveDto {
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) reasonCode?: string | null
   @Transform(trim) @IsOptional() @IsString() @MaxLength(1000) reason?: string
   @Transform(emptyToNull) @IsOptional() @Matches(DATE, { message: "Use a date like 2026-03-31." }) until?: string | null
+  /** Deciding against the gates' recommendation: a reason from Lists → Override reasons, and one line. */
+  @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) overrideReasonCode?: string | null
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(1000) overrideReason?: string
 }
 
 export class BulkMoveDto extends MoveDto {
@@ -42,4 +45,20 @@ export class UndoDto {
 
 export class SetPersonDto {
   @Transform(emptyToNull) @IsOptional() @IsUUID() personId?: string | null
+}
+
+export class SetGateDto {
+  @IsOptional() @IsIn(["pass", "fail", "unknown"]) value?: string
+  /** The checklist tick: false = not needed for this brand (needs a reason). */
+  @IsOptional() @IsBoolean() applies?: boolean
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(500) evidence?: string
+  @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) reasonCode?: string | null
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(1000) reason?: string
+}
+
+export class UpdateGateDefinitionDto {
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(80) name?: string
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(500) checks?: string
+  @IsOptional() @IsBoolean() active?: boolean
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(500) reason?: string
 }

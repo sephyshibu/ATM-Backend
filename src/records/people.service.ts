@@ -63,6 +63,11 @@ export class PeopleService {
       if (email !== current?.email && dto.emailStatus === undefined) data.emailStatus = "unknown"
     }
     if (dto.emailStatus !== undefined) data.emailStatus = dto.emailStatus
+    // Every person needs a work email (outreach and duplicate checks use it); it can be changed, never emptied.
+    const emailAfter = data.email !== undefined ? data.email : (current?.email ?? null)
+    if (!emailAfter && (!current || dto.email !== undefined)) throw badRequest("Add the work email.")
+    const statusAfter = (data.emailStatus as string | undefined) ?? current?.emailStatus ?? "unknown"
+    if (statusAfter !== "unknown" && !emailAfter) throw badRequest("Add the email before marking it verified or bounced.")
     if (dto.phone !== undefined) data.phone = dto.phone
     if (dto.linkedinUrl !== undefined) data.linkedinUrl = normaliseUrl(dto.linkedinUrl, "LinkedIn")
     if (dto.country !== undefined) data.country = checkCountry(dto.country, "Country")

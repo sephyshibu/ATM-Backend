@@ -31,7 +31,7 @@ import {
 import { TagsService } from "./tags.service"
 
 /** The pick-lists the Records screens use (retired values are included so old records still show their names). */
-const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag", "disqualify_reason", "override_reason"]
+const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag", "disqualify_reason", "override_reason", "gate_change_reason"]
 
 // Records: brands, organisations and people. Looking needs "View brands and people"; adding and
 // changing needs "Edit brands and people"; archiving and restoring needs "Archive and restore records".

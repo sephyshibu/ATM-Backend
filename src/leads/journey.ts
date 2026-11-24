@@ -30,6 +30,7 @@ export const FLAG_LABELS: Record<string, string> = {
   no_signer: "No signer named: check before the call",
   override: "Moved by override",
   eligible_again: "Rest is over: it can start again",
+  decision_override: "Decided against the gates' recommendation",
 }
 
 export type Pos = { stage: Stage; lane: Lane | null }
@@ -62,14 +63,16 @@ export type MoveDef = {
   check?: "target_ready"
   /** Shown in red: it ends the journey. */
   ends?: boolean
+  /** A decision the gates recommend on: deciding otherwise is an override (needs a reason, flagged, never blocked). */
+  decision?: { stage: "desk" | "call"; agrees: string[] }
 }
 
 /** Moves a person makes. Grouped on screen by where the lead is. */
 export const MOVES: MoveDef[] = [
   // Register: the Target checkpoint
-  { key: "to_target", label: "Move to Target", help: "Ready for the next weekly batch.", permission: "leads.move_target", from: at("register"), to: () => ({ stage: "target", lane: null }), check: "target_ready" },
-  { key: "park", label: "Park", help: "Not now; look again on the recheck date.", permission: "leads.move_target", from: at("register"), to: (p) => ({ ...p, lane: "parked" }), untilRequired: true },
-  { key: "not_pursued", label: "Not pursued", help: "Ends this journey, with a reason.", permission: "leads.move_target", from: at("register"), to: (p) => ({ ...p, lane: "not_pursued" }), reasonList: "disqualify_reason", ends: true },
+  { key: "to_target", label: "Move to Target", help: "Ready for the next weekly batch.", permission: "leads.move_target", from: at("register"), to: () => ({ stage: "target", lane: null }), check: "target_ready", decision: { stage: "desk", agrees: ["pursue"] } },
+  { key: "park", label: "Park", help: "Not now; look again on the recheck date.", permission: "leads.move_target", from: at("register"), to: (p) => ({ ...p, lane: "parked" }), untilRequired: true, decision: { stage: "desk", agrees: ["review", "not_now"] } },
+  { key: "not_pursued", label: "Not pursued", help: "Ends this journey, with a reason.", permission: "leads.move_target", from: at("register"), to: (p) => ({ ...p, lane: "not_pursued" }), reasonList: "disqualify_reason", ends: true, decision: { stage: "desk", agrees: ["not_now"] } },
   { key: "unpark", label: "Back to Register", help: "Look at it again now.", permission: "leads.move_target", from: inLane("parked"), to: (p) => ({ ...p, lane: null }) },
   { key: "back_to_register", label: "Back to Register", help: "Take it out of Target before it is sent.", permission: "leads.move_target", from: at("target"), to: () => ({ stage: "register", lane: null }) },
 
@@ -85,11 +88,11 @@ export const MOVES: MoveDef[] = [
   { key: "warm_disqualify", label: "Disqualify", help: "Ends this journey, with a reason.", permission: "outreach.handle_replies", from: at("warm"), to: (p) => ({ ...p, lane: "disqualified" }), reasonList: "disqualify_reason", ends: true },
 
   // Hot: the call
-  { key: "mark_sql", label: "Mark SQL", help: "Qualified on the call: hands over to Sales.", permission: "calls.do", from: at("hot"), to: () => ({ stage: "sql", lane: null }), clear: ["no_signer"] },
-  { key: "verification_pending", label: "Verification pending", help: "A gate still needs evidence after the call.", permission: "calls.do", from: at("hot"), to: (p) => ({ ...p, lane: "verification_pending" }) },
-  { key: "hot_nurture", label: "Not now", help: "To Nurture until the date.", permission: "calls.do", from: at("hot"), to: (p) => ({ ...p, lane: "nurture" }), untilRequired: true },
-  { key: "hot_disqualify", label: "Disqualify", help: "Ends this journey, with a reason.", permission: "calls.do", from: at("hot"), to: (p) => ({ ...p, lane: "disqualified" }), reasonList: "disqualify_reason", ends: true },
-  { key: "vp_sql", label: "Mark SQL", help: "The evidence came in.", permission: "calls.do", from: inLane("verification_pending"), to: () => ({ stage: "sql", lane: null }), clear: ["no_signer"] },
+  { key: "mark_sql", label: "Mark SQL", help: "Qualified on the call: hands over to Sales.", permission: "calls.do", from: at("hot"), to: () => ({ stage: "sql", lane: null }), clear: ["no_signer"], decision: { stage: "call", agrees: ["sql"] } },
+  { key: "verification_pending", label: "Verification pending", help: "A gate still needs evidence after the call.", permission: "calls.do", from: at("hot"), to: (p) => ({ ...p, lane: "verification_pending" }), decision: { stage: "call", agrees: ["verification_pending"] } },
+  { key: "hot_nurture", label: "Not now", help: "To Nurture until the date.", permission: "calls.do", from: at("hot"), to: (p) => ({ ...p, lane: "nurture" }), untilRequired: true, decision: { stage: "call", agrees: ["not_now", "verification_pending"] } },
+  { key: "hot_disqualify", label: "Disqualify", help: "Ends this journey, with a reason.", permission: "calls.do", from: at("hot"), to: (p) => ({ ...p, lane: "disqualified" }), reasonList: "disqualify_reason", ends: true, decision: { stage: "call", agrees: ["not_now"] } },
+  { key: "vp_sql", label: "Mark SQL", help: "The evidence came in.", permission: "calls.do", from: inLane("verification_pending"), to: () => ({ stage: "sql", lane: null }), clear: ["no_signer"], decision: { stage: "call", agrees: ["sql"] } },
   { key: "vp_nurture", label: "Nurture", help: "To Nurture until the date.", permission: "calls.do", from: inLane("verification_pending"), to: (p) => ({ ...p, lane: "nurture" }), untilRequired: true },
   { key: "vp_disqualify", label: "Disqualify", help: "Ends this journey, with a reason.", permission: "calls.do", from: inLane("verification_pending"), to: (p) => ({ ...p, lane: "disqualified" }), reasonList: "disqualify_reason", ends: true },
 

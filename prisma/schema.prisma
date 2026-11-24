@@ -592,6 +592,10 @@ model LeadMove {
   undoneById   String?   @map("undone_by_id") @db.Uuid
   /// On an undo row: the move it undid.
   undoOfId     String?   @map("undo_of_id") @db.Uuid
+  /// For decisions (Target, SQL…): what the gates recommended at that moment, and whether the person decided
+  /// otherwise (an override, with reasonCode and reason).
+  recommendation String?
+  isOverride     Boolean @default(false) @map("is_override")
 
   lead Lead @relation(fields: [leadId], references: [id])
 
@@ -630,4 +634,69 @@ model Job {
   @@index([status, runAt])
   @@index([name, createdAt])
   @@map("job")
+}
+
+// ---------------------------------------------------------------- Gates
+
+/// A gate: one check that decides the pipeline. Desk gates (01–03) decide Target; call gates (04–06) are
+/// confirmed after the qualifying call. Edited in Settings → Gates; switched off rather than deleted.
+model GateDefinition {
+  code        String   @id
+  name        String
+  /// What the gate checks, shown next to it.
+  checks      String   @default("")
+  /// desk | call
+  stage       String
+  /// The check the system makes from the brand's own fields, to flag a value that disagrees: category |
+  /// revenue_band | lane, or none.
+  rule        String?
+  /// Off: the gate isn't shown or counted for any lead (its values are kept).
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  @@map("gate_definition")
+}
+
+/// A gate's current value on one lead: pass, fail or unknown, and whether it applies (the checklist tick). Every
+/// change is a gate_change row.
+model GateResult {
+  id                  String   @id @default(uuid()) @db.Uuid
+  leadId              String   @map("lead_id") @db.Uuid
+  gateCode            String   @map("gate_code")
+  /// pass | fail | unknown (missing evidence is always unknown, and unknown never blocks)
+  value               String   @default("unknown")
+  /// Unticked: not needed for this brand, so it doesn't count in the recommendation (with a reason).
+  applies             Boolean  @default(true)
+  notApplicableReason String?  @map("not_applicable_reason")
+  /// One line of evidence: where the value comes from.
+  evidence            String   @default("")
+  /// default | auto (from the brand's details) | import | manual | call
+  source              String   @default("default")
+  setById             String?  @map("set_by_id") @db.Uuid
+  setAt               DateTime @default(now()) @map("set_at")
+
+  @@unique([leadId, gateCode])
+  @@map("gate_result")
+}
+
+/// The history of a lead's gates: who changed which gate, from what to what, and why. Never changed.
+model GateChange {
+  id         String   @id @default(uuid()) @db.Uuid
+  leadId     String   @map("lead_id") @db.Uuid
+  gateCode   String   @map("gate_code")
+  /// value | applies | evidence
+  field      String
+  before     String?
+  after      String?
+  reasonCode String?  @map("reason_code")
+  reason     String?
+  source     String
+  actorId    String?  @map("actor_id") @db.Uuid
+  actorLabel String   @map("actor_label")
+  at         DateTime @default(now())
+
+  @@index([leadId, at])
+  @@map("gate_change")
 }

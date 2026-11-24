@@ -7,6 +7,7 @@ import { AuditService } from "../audit/audit.service"
 import { badRequest, conflict, forbidden, notFound } from "../common/errors"
 import { actorLabel, type RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
+import { GatesService, type GateValue } from "./gates.service"
 import { EVENTS, FLAG_LABELS, isClosed, LANE_LABELS, LANES, moveLabel, MOVES, type Lane, type MoveDef, type Pos, posLabel, STAGE_LABELS, STAGES, type Stage } from "./journey"
 import type { EventDto, MoveDto, OpenLeadDto, OverrideDto, UndoDto } from "./leads.dto"
 
@@ -35,6 +36,7 @@ export class JourneyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly gates: GatesService,
   ) {}
 
   // ---------------------------------------------------------------- Reading
@@ -46,7 +48,8 @@ export class JourneyService {
       include: { brand: { select: brandSelect }, moves: { orderBy: { at: "desc" }, take: 1 } },
     })
     const people = await this.prisma.person.findMany({ where: { id: { in: leads.map((l) => l.personId).filter((x): x is string => !!x) } }, select: { id: true, firstName: true, lastName: true, email: true, emailStatus: true } })
-    return leads.map(({ moves, ...l }) => ({ ...this.view(l), person: people.find((p) => p.id === l.personId) ?? null, lastMove: moves[0] ? this.moveView(moves[0]) : null }))
+    const recs = await this.gates.recommendMany(leads.map((l) => l.id))
+    return leads.map(({ moves, ...l }) => ({ ...this.view(l), person: people.find((p) => p.id === l.personId) ?? null, lastMove: moves[0] ? this.moveView(moves[0]) : null, recommendation: recs.get(l.id) ?? null }))
   }
 
   /** A brand's leads, newest first, each with its moves and the moves this person can make now. */
@@ -67,7 +70,10 @@ export class JourneyService {
     const lastUndoable = l.moves.find((m) => !m.undoneAt && m.kind !== "undo")
     const moves = MOVES.filter((m) => m.from(p))
     const targetCheck = moves.some((m) => m.check === "target_ready") ? await this.targetReady(this.prisma, l) : null
+    await this.gates.ensure(this.prisma, l.id)
+    const recs = await this.gates.recommendations(this.prisma, l.id)
     return {
+      recommendations: recs,
       ...this.view(l),
       person,
       moves: l.moves.map((m) => this.moveView(m)),
@@ -83,6 +89,8 @@ export class JourneyService {
         to: posLabel(m.to(p)),
         blockers: m.check === "target_ready" ? (targetCheck?.blockers ?? []) : [],
         warnings: m.check === "target_ready" ? (targetCheck?.warnings ?? []) : [],
+        /** For decisions: the gates' recommendation, and whether this move goes against it (an override). */
+        recommendation: m.decision ? { ...recs[m.decision.stage], stage: m.decision.stage, override: !m.decision.agrees.includes(recs[m.decision.stage].value) } : null,
       })),
       events: EVENTS.filter((e) => e.from(p)).map((e) => ({ type: e.type, label: e.label, to: posLabel(e.to(p)) })),
       canUndo: !!lastUndoable && lastUndoable.fromStage !== null && me.permissions.has("control.undo"),
@@ -108,8 +116,8 @@ export class JourneyService {
   // ---------------------------------------------------------------- Checks
 
   /**
-   * Before Target (SRS MKT-03): lane and tier set, the organisation not excluded, and a main contact with a
-   * verified email and a LinkedIn profile. No signer named is a warning: it is flagged at the call, not blocked.
+   * Before Target (SRS MKT-03): a lane, the organisation not excluded, and a main contact with a verified email
+   * and a LinkedIn profile (what outreach needs). No tier and no signer named are warnings, never blocks.
    */
   private async targetReady(db: Db, l: Pick<Lead, "brandId" | "personId">) {
     const blockers: string[] = []
@@ -122,7 +130,7 @@ export class JourneyService {
     if (b.archivedAt) blockers.push("The brand is archived.")
     if (b.organisation.excluded) blockers.push(`${b.organisation.name} is excluded: don't approach it.`)
     if (!b.routingCode) blockers.push("Set the brand's lane.")
-    if (!b.tierCode) blockers.push("Set the brand's tier.")
+    if (!b.tierCode) warnings.push("No tier is set for the brand yet.")
     const contact = b.people.find((x) => x.person.id === l.personId)?.person ?? b.people.find((x) => x.isPrimary)?.person
     if (!contact) blockers.push("Link a main contact to the brand.")
     else {
@@ -156,7 +164,7 @@ export class JourneyService {
     to: Pos,
     flags: string[],
     until: Date | null,
-    move: { moveKey: string; kind: "person" | "system" | "override" | "undo"; reasonCode?: string | null; reason?: string | null; eventKey?: string | null; actorId: string | null; actorLabel: string; undoOfId?: string; by: RequestUser | null },
+    move: { moveKey: string; kind: "person" | "system" | "override" | "undo"; reasonCode?: string | null; reason?: string | null; eventKey?: string | null; actorId: string | null; actorLabel: string; undoOfId?: string; by: RequestUser | null; recommendation?: string | null; isOverride?: boolean },
     ip: string | null,
   ) {
     const stageChanged = to.stage !== l.stage
@@ -185,6 +193,8 @@ export class JourneyService {
         actorId: move.actorId,
         actorLabel: move.actorLabel,
         undoOfId: move.undoOfId ?? null,
+        recommendation: move.recommendation ?? null,
+        isOverride: move.isOverride ?? false,
       },
     })
     const before = [posLabel(l), showDate(l.laneUntil) && `Until ${showDate(l.laneUntil)}`, l.flags.length ? `Flags: ${l.flags.join(", ")}` : ""].filter(Boolean).join("\n")
@@ -207,7 +217,7 @@ export class JourneyService {
   }
 
   /** A new journey for a brand, at Register. A brand has one open lead at a time. */
-  async openIn(db: Db, brandId: string, opts: { personId?: string | null; source?: string; importBatchId?: string | null }, me: RequestUser, ip: string | null) {
+  async openIn(db: Db, brandId: string, opts: { personId?: string | null; source?: string; importBatchId?: string | null; gates?: Record<string, { value: GateValue; applies: boolean }>; gateNote?: string }, me: RequestUser, ip: string | null) {
     const b = await db.brand.findUnique({ where: { id: brandId }, select: { ...brandSelect, people: { where: { removedAt: null, isPrimary: true }, select: { personId: true } } } })
     if (!b) throw notFound("That brand")
     if (b.archivedAt) throw badRequest(`${b.name} is archived.`)
@@ -222,6 +232,8 @@ export class JourneyService {
     }
     const lead = await db.lead.create({ data: { brandId, personId, source: opts.source ?? "outbound", stage: "register", importBatchId: opts.importBatchId ?? null, createdById: me.id } })
     await db.leadMove.create({ data: { leadId: lead.id, moveKey: "open", kind: "person", toStage: "register", actorId: me.id, actorLabel: actorLabel(me) } })
+    const fromImport = opts.gates && Object.keys(opts.gates).length ? opts.gates : null
+    await this.gates.initFor(db, lead.id, fromImport ?? {}, fromImport ? { me, note: opts.gateNote ?? "Brand Register import" } : null)
     await this.audit.record({ actor: me, section: SECTION, action: `${b.name}: lead opened at Register`, entityType: "lead", entityId: lead.id, after: `Source: ${lead.source}`, ip }, db)
     return lead
   }
@@ -271,8 +283,33 @@ export class JourneyService {
       const r = await this.targetReady(db, l)
       if (r.blockers.length) throw badRequest(`${l.brand.name} isn't ready for Target: ${r.blockers.join(" ")}`)
     }
-    const flags = [...new Set([...l.flags.filter((f) => !(def.clear ?? []).includes(f)), ...(def.set ?? [])])]
-    await this.apply(db, l, def.to(from), flags, until, { moveKey: def.key, kind: "person", reasonCode, reason, actorId: me.id, actorLabel: actorLabel(me), by: me }, ip)
+    let flags = [...new Set([...l.flags.filter((f) => !(def.clear ?? []).includes(f)), ...(def.set ?? [])])]
+    // A decision against the gates' recommendation is allowed (gates never block) but is an override: it needs a
+    // reason from Lists → Override reasons and one line, and the lead is flagged.
+    let recommendation: string | null = null
+    let isOverride = false
+    let overrideNote: string | null = null
+    if (def.decision) {
+      const rec = (await this.gates.recommendations(db, id))[def.decision.stage]
+      recommendation = rec.label
+      if (!def.decision.agrees.includes(rec.value)) {
+        if (!dto.overrideReasonCode || !dto.overrideReason?.trim()) throw badRequest(`The gates recommend ${rec.label} for ${l.brand.name} (${rec.reasons.join("; ") || "all pass"}). To ${def.label.toLowerCase()} anyway, pick an override reason and write one line.`)
+        const v = await db.listValue.findUnique({ where: { listKey_code: { listKey: "override_reason", code: dto.overrideReasonCode } } })
+        if (!v || v.retiredAt) throw badRequest("Pick an override reason from the list.")
+        isOverride = true
+        overrideNote = `Override (recommended ${rec.label}): ${v.label}: ${dto.overrideReason.trim()}`
+        flags = [...new Set([...flags, "decision_override"])]
+      }
+    }
+    await this.apply(
+      db,
+      l,
+      def.to(from),
+      flags,
+      until,
+      { moveKey: def.key, kind: "person", reasonCode, reason: [reason, overrideNote].filter(Boolean).join(" · ") || null, actorId: me.id, actorLabel: actorLabel(me), by: me, recommendation, isOverride },
+      ip,
+    )
   }
 
   /** The same move for many leads; each lead succeeds or fails on its own, with the reason. */

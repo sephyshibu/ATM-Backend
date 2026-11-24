@@ -9,7 +9,7 @@ import "dotenv/config"
 import { PrismaClient } from "@prisma/client"
 
 import { BUILT_IN_ROLES, PERMISSIONS } from "../src/common/permissions"
-import { LIST_RELABELS, LISTS, SETTINGS } from "../src/common/settings-catalogue"
+import { GATES, LIST_RELABELS, LISTS, SETTINGS } from "../src/common/settings-catalogue"
 import { hardenDatabase, syncPermissionCatalogue } from "../src/prisma/db-hardening"
 
 const prisma = new PrismaClient()
@@ -124,6 +124,16 @@ async function seedAdmins(roleIds: Map<string, string>) {
   }
 }
 
+/** The six gates, created once; after that they're edited in Settings → Gates and never overwritten here. */
+async function seedGates() {
+  for (const [i, g] of GATES.entries()) {
+    const has = await prisma.gateDefinition.findUnique({ where: { code: g.code } })
+    if (has) continue
+    await prisma.gateDefinition.create({ data: { code: g.code, name: g.name, checks: g.checks, stage: g.stage, rule: g.rule, sortOrder: (i + 1) * 10 } })
+    console.log(`  gate: ${g.code} ${g.name}`)
+  }
+}
+
 async function main() {
   console.log("Seeding ATM CRM…")
   await hardenDatabase(prisma)
@@ -133,6 +143,7 @@ async function main() {
   await seedSettings()
   await seedLists()
   await relabelLists()
+  await seedGates()
   await seedAdmins(roles)
   console.log("Done.")
 }

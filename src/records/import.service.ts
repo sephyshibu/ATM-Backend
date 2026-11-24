@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service"
 import { COUNTRY_CODES } from "../common/countries"
 import { badRequest, notFound } from "../common/errors"
 import type { RequestUser } from "../common/request-user"
+import { GatesService, parseGateCell, type GateValue } from "../leads/gates.service"
 import { JourneyService } from "../leads/journey.service"
 import { PrismaService } from "../prisma/prisma.service"
 import { coerceValue, type CustomValues, parseNumber, splitList } from "./custom-fields.service"
@@ -123,10 +124,11 @@ type Ref = {
   users: { id: string; email: string; name: string }[]
   orgs: { id: string; name: string; domain: string | null; excluded: boolean; archived: boolean }[]
   brands: Map<string, ExistingBrand>
+  gateCodes: { code: string; name: string }[]
   people: Map<string, { id: string; name: string; organisationId: string; organisationName: string }>
 }
 
-type ExistingBrand = Prisma.BrandGetPayload<{ include: { organisation: { select: { id: true; name: true; excluded: true } }; people: { where: { removedAt: null }; select: { personId: true; isPrimary: true } }; leads: { select: { id: true } } } }>
+type ExistingBrand = Prisma.BrandGetPayload<{ include: { organisation: { select: { id: true; name: true; excluded: true } }; people: { where: { removedAt: null }; select: { personId: true; isPrimary: true } }; leads: { select: { id: true; closedAt: true } } } }>
 
 type ContactPlan = {
   primary: boolean
@@ -162,6 +164,8 @@ type BrandPlan = {
   data: BrandFieldsPlan
   tags: string[]
   contacts: ContactPlan[]
+  /** Gate cells that were filled in: value and tick, by gate code. */
+  gates: Record<string, { value: GateValue; applies: boolean }>
 }
 
 export type ImportMode = "skip" | "update"
@@ -175,6 +179,7 @@ export class ImportService {
     private readonly audit: AuditService,
     private readonly tags: TagsService,
     private readonly journey: JourneyService,
+    private readonly gates: GatesService,
   ) {}
 
   /** The fields a file's columns can be mapped to: the built-in ones, then the custom fields from Settings → Fields. */
@@ -195,23 +200,33 @@ export class ImportService {
     const own = fields.map((f) => ({ key: `custom.${f.key}`, label: f.label, required: f.required, hint: hintFor(f), aliases: [f.label.toLowerCase(), f.key.replace(/_/g, " ")], group: kind === "brands" ? "Brand: your fields" : "Product: your fields" }))
     const orgBase = base.filter((t) => t.group === "Organisation")
     const contacts = kind === "brands" ? [...contactTargets("c1"), ...contactTargets("c2")] : []
-    return [...orgBase, ...orgTargets, ...base.filter((t) => t.group !== "Organisation"), ...own, ...contacts]
+    const gateDefs = kind === "brands" ? await this.prisma.gateDefinition.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }) : []
+    const gates = gateDefs.map((g) => ({
+      key: `gate.${g.code}`,
+      label: `Gate ${g.code} ${g.name}`,
+      required: false,
+      hint: "Pass or Fail ticks the gate (also Y/N, ✓/✗). Empty, Unknown or ? leaves it unticked (not checked). N/A marks it not needed for this brand.",
+      aliases: [`gate ${g.code}`, `gate ${Number(g.code)}`, `g${Number(g.code)}`, `${g.code} ${g.name}`.toLowerCase(), `gate ${g.code} ${g.name}`.toLowerCase(), `${g.name} gate`.toLowerCase(), `gate ${g.name}`.toLowerCase()],
+      group: "Gates",
+    }))
+    return [...orgBase, ...orgTargets, ...base.filter((t) => t.group !== "Organisation"), ...own, ...contacts, ...gates]
   }
 
   // ---------------------------------------------------------------- Shared lookups
 
   private async load(db: Prisma.TransactionClient, entity: "brand" | "product"): Promise<Ref> {
     const brandEntity = entity === "brand"
-    const [values, fields, orgFields, users, orgs, brands, people] = await Promise.all([
+    const [values, fields, orgFields, users, orgs, brands, people, gateDefs] = await Promise.all([
       db.listValue.findMany({ where: { listKey: { in: ["category", "sub_category", "routing", "tier", "tag", "buying_role", "consent_basis"] } }, include: { parent: { select: { code: true } } } }),
       db.customField.findMany({ where: { entityType: entity } }),
       brandEntity ? db.customField.findMany({ where: { entityType: "organisation" } }) : Promise.resolve([]),
       db.user.findMany({ where: { status: { not: "deactivated" } }, select: { id: true, email: true, name: true } }),
       brandEntity ? db.organisation.findMany({ select: { id: true, name: true, domain: true, excluded: true, archivedAt: true } }) : Promise.resolve([]),
       brandEntity
-        ? db.brand.findMany({ include: { organisation: { select: { id: true, name: true, excluded: true } }, people: { where: { removedAt: null }, select: { personId: true, isPrimary: true } }, leads: { select: { id: true } } } })
+        ? db.brand.findMany({ include: { organisation: { select: { id: true, name: true, excluded: true } }, people: { where: { removedAt: null }, select: { personId: true, isPrimary: true } }, leads: { select: { id: true, closedAt: true } } } })
         : Promise.resolve([] as ExistingBrand[]),
       brandEntity ? db.person.findMany({ where: { archivedAt: null, email: { not: null } }, select: { id: true, email: true, firstName: true, lastName: true, organisationId: true, organisation: { select: { name: true } } } }) : Promise.resolve([]),
+      brandEntity ? db.gateDefinition.findMany({ where: { active: true }, select: { code: true, name: true } }) : Promise.resolve([]),
     ])
     const list = (k: string) => values.filter((v) => v.listKey === k).map((v) => ({ code: v.code, label: v.label, parentCode: v.parent?.code ?? null, retired: !!v.retiredAt }))
     return {
@@ -221,6 +236,7 @@ export class ImportService {
       users,
       orgs: orgs.map((o) => ({ id: o.id, name: o.name, domain: o.domain, excluded: o.excluded, archived: !!o.archivedAt })),
       brands: new Map(brands.map((b) => [b.domain, b])),
+      gateCodes: gateDefs,
       people: new Map(people.map((p) => [p.email!, { id: p.id, name: `${p.firstName} ${p.lastName}`.trim(), organisationId: p.organisationId, organisationName: p.organisation.name }])),
     }
   }
@@ -304,6 +320,7 @@ export class ImportService {
       lastName = lastName || (parts.length > 1 ? parts[parts.length - 1] : "")
     }
     if (!firstName) reasons.push(`${who}: add a name (Full name or First name).`)
+    if (!get("email")) reasons.push(`${who}: add the work email (every person needs one).`)
     let email: string | null = null
     if (get("email")) {
       email = get("email").toLowerCase()
@@ -490,6 +507,15 @@ export class ImportService {
       const contacts = (["c1", "c2"] as const).map((p) => this.pickContact(ref, v, p, orgId, orgKey, seenEmails, row, reasons, warnings)).filter((c): c is ContactPlan => !!c)
       if (contacts.length === 2 && contacts[0].data.email && contacts[0].data.email === contacts[1].data.email) reasons.push("Main and second contact have the same email.")
 
+      // Gates: each filled cell is the starting value (or, on an update, the new value) for the brand's lead.
+      const gates: Record<string, { value: GateValue; applies: boolean }> = {}
+      for (const g of ref.gateCodes) {
+        const cell = parseGateCell(v[`gate.${g.code}`])
+        if (cell === "invalid") reasons.push(`Gate ${g.code} ${g.name}: "${text(v[`gate.${g.code}`])}" should be Pass, Fail, Unknown or N/A.`)
+        else if (cell) gates[g.code] = cell
+      }
+      if (existing && Object.keys(gates).length && existing.leads.length && !existing.leads.some((l) => !l.closedAt)) warnings.push(`${existing.name} has no open lead, so the gate columns are not used.`)
+
       const tags = this.pickTags(ref, v.tags, reasons, warnings)
       // Custom fields: on a new brand every required one is needed; on an update only the cells filled in count.
       const custom = action === "new" ? this.pickCustom(ref, v, reasons) : this.pickCustomFilled(ref, v, reasons)
@@ -511,6 +537,7 @@ export class ImportService {
           org,
           tags,
           contacts,
+          gates,
           data: { name, categoryCode: cat.categoryCode, subCategoryCode: cat.subCategoryCode, routingCode, tierCode, homeCountry, homeRevenueUsd: revenue ?? null, revenueYear, asianMarketsLive: markets, ownerId, linkedinUrl, description: text(v.description), custom },
         })
     }
@@ -641,7 +668,10 @@ export class ImportService {
               const wanted = (await this.tags.ensure(tx, p.tags, me, ip)).map((t) => t.code)
               tagLine = await this.tags.set(tx, "brand", b.id, [...new Set([...current.map((t) => t.code), ...wanted])], me)
             }
-            if (changes.length) await tx.brand.update({ where: { id: b.id }, data })
+            if (changes.length) {
+              await tx.brand.update({ where: { id: b.id }, data })
+              await this.gates.syncBrand(tx, b.id)
+            }
             if (changes.length || tagLine)
               await this.audit.record(
                 {
@@ -692,8 +722,12 @@ export class ImportService {
           const excluded = ref.orgs.find((o) => o.id === organisationId)?.excluded ?? false
           const neverHadLead = p.action === "new" || !p.existing!.leads.length
           if (!excluded && neverHadLead) {
-            await this.journey.openIn(tx, brandId, { importBatchId: batch.id }, me, ip)
+            await this.journey.openIn(tx, brandId, { importBatchId: batch.id, gates: p.gates, gateNote: `From ${dto.fileName}, row ${p.row}` }, me, ip)
             leadsOpened++
+          } else if (Object.keys(p.gates).length) {
+            // An existing brand with an open lead: the register's gate values update it (logged as the import).
+            const open = await tx.lead.findFirst({ where: { brandId, closedAt: null } })
+            if (open) await this.gates.applyImport(tx, open.id, p.gates, me, `From ${dto.fileName}, row ${p.row}`)
           }
         }
         return this.finish(tx, batch.id, results, me, ip, `Imported ${created} new and ${updated} updated brand${created + updated === 1 ? "" : "s"} from ${dto.fileName}`, { newBrands: created, updates: updated, newOrganisations: orgsMade, leadsOpened, contacts: peopleAdded })
