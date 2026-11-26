@@ -227,6 +227,26 @@ person who ran the import can attach it, once, on the same day, and only the sam
 .xlsx without macros or a plain-text .csv (25 MB at most). Its name, size and SHA-256 are on the import record,
 and anyone with "Import brands and products" can download it through a 5-minute link (logged).
 
+## Email templates (Phase 3, step 8)
+
+- **Settings → Email templates**: outreach sequences (7 emails: subject, body, days to wait) and booking emails
+  (email 1 and the reminder, which waits the working days set in Configuration → Booking emails). Every edit is a
+  **draft version**; anyone with `templates.approve` **approves** it, including its author (recorded as
+  self-approved); approving replaces
+  the version in use for future contacts only. Approved wording can't change (database trigger), and templates,
+  versions and matrix cells are never deleted.
+- **Settings → Template matrix**: which template a brand gets by category, sub-category and lane. The most specific
+  cell wins: category + sub-category + lane → category + sub-category → category + lane → category → default.
+  A cell can only point at a template with an approved version.
+- **Merge fields** (`{{firstName}}`, `{{brandName}}`, `{{touchOne}}`, `{{bookingLink}}`…): filled from the brand, its
+  contact (main contact → signer → first linked), its owner at ATM and its **verified** knowledge base only.
+  `{{field|text}}` gives a fallback. When a brand has no verified touch-one observation, the template's **back-up
+  opening line** is used and the brand page warns that the first email is generic.
+- **Brand page → Emails**: exactly which template and version the brand gets, why, and every email filled in, with
+  empty fields highlighted.
+- The booking page link is Configuration → Booking emails → Booking page link (run `npx prisma db seed` once to add
+  the setting; it never changes existing values).
+
 ## API (all under `/api/v1`)
 
 | Method | Path | Permission |
@@ -260,6 +280,10 @@ and anyone with "Import brands and products" can download it through a 5-minute 
 | POST | `/knowledge/brands/:brandId/dossiers` (multipart `file`), `/knowledge/brands/:brandId/links`, `/knowledge/dossiers/:id/{retry,archive,restore}` | kb.enter_facts or kb.import |
 | POST | `/knowledge/dossiers/:id/check` (note, versionDate), `/knowledge/dossiers/:id/uncheck` (reason) | kb.enter_facts, kb.import, kb.verify_facts or kb.verify_own_facts; the person who added the dossier may check it (recorded as self-checked) |
 | PUT | `/knowledge/brands/:brandId/facts/:key` | kb.enter_facts |
+| GET | `/templates`, `/templates/:id`, `/templates/merge-fields`, `/templates/matrix`, `/templates/brands/:brandId` · POST `/templates/preview/:kind` | records.view |
+| POST | `/templates` · PUT `/templates/:id/draft` · POST `/templates/versions/:id/discard`, `/templates/:id/{archive,restore}` | templates.write |
+| POST | `/templates/versions/:id/approve` | templates.approve (your own version: recorded as self-approved) |
+| PUT | `/templates/matrix` · POST `/templates/matrix/:id/remove` | templates.matrix |
 | POST | `/knowledge/facts/:id/verify`, `/knowledge/brands/:brandId/facts/verify` | kb.verify_facts (own: kb.verify_own_facts) |
 | POST | `/knowledge/facts/:id/reject` | kb.verify_facts |
 | POST | `/records/imports/:id/file` · GET `/records/imports/:id/file` | kb.import |

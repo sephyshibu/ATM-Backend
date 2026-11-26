@@ -36,6 +36,19 @@ function validate(def: SettingDefinition, value: unknown): string | number | boo
     }
     default: {
       const s = String(value ?? "").trim()
+      if (def.key === "booking.url") {
+        // The booking page link in booking emails: empty until it's set up, else a full https address.
+        if (!s) return s
+        let u: URL
+        try {
+          u = new URL(s)
+        } catch {
+          throw badRequest("Booking page link: enter the full address, starting with https://.")
+        }
+        if (u.protocol !== "https:") throw badRequest("Booking page link: use an https:// address.")
+        if (s.length > 500) throw badRequest("Booking page link is too long.")
+        return u.toString()
+      }
       if (!s) throw badRequest(`${def.label} can't be empty.`)
       if (s.length > 200) throw badRequest(`${def.label} is too long.`)
       if (def.key === "company.timezone") {

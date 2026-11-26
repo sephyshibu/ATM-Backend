@@ -24,7 +24,7 @@ export const PERMISSIONS: PermissionDef[] = [
 
   // Templates
   { key: "templates.write", group: "Email templates", label: "Write templates", description: "Create and edit email templates. Edits make a new draft version." },
-  { key: "templates.approve", group: "Email templates", label: "Approve templates", description: "Approve a draft so it can be used. Nobody approves their own." },
+  { key: "templates.approve", group: "Email templates", label: "Approve templates", description: "Approve a draft so it can be used, including one you wrote (recorded as self-approved)." },
   { key: "templates.matrix", group: "Email templates", label: "Edit the template matrix", description: "Choose which template each category, sub-category and lane gets." },
 
   // Outreach

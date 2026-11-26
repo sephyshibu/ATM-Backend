@@ -16,6 +16,7 @@ import { PrismaModule } from "./prisma/prisma.module"
 import { RecordsModule } from "./records/records.module"
 import { RolesModule } from "./roles/roles.module"
 import { SettingsModule } from "./settings/settings.module"
+import { TemplatesModule } from "./templates/templates.module"
 import { UsersModule } from "./users/users.module"
 
 @Module({
@@ -33,6 +34,7 @@ import { UsersModule } from "./users/users.module"
     KnowledgeModule,
     RecordsModule,
     LeadsModule,
+    TemplatesModule,
   ],
   controllers: [HealthController],
   providers: [

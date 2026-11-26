@@ -21,6 +21,7 @@ export const SETTINGS: SettingDef[] = [
   { key: "clock.enquiry_escalate_hours", group: "Clocks", label: "Alert the founders about an untriaged enquiry after", description: "Working hours with no triage.", type: "integer", unit: "working hours", min: 1, max: 48, default: 2 },
 
   // Booking emails
+  { key: "booking.url", group: "Booking emails", label: "Booking page link", description: "Where brands book the qualifying call; shown in booking emails as {{bookingLink}}. Leave empty until it's set up.", type: "text", default: "" },
   { key: "booking.reminder_working_days", group: "Booking emails", label: "Send the booking reminder after", description: "Working days after booking email 1 with no booking.", type: "integer", unit: "working days", min: 1, max: 20, default: 3 },
   { key: "booking.followup_working_days", group: "Booking emails", label: "Create a follow-up task after", description: "Working days after the reminder with no booking.", type: "integer", unit: "working days", min: 1, max: 20, default: 3 },
   { key: "booking.prework_first_hours", group: "Booking emails", label: "First pre-work reminder", description: "Hours before the call.", type: "integer", unit: "hours before", min: 1, max: 168, default: 48 },

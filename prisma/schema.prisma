@@ -879,3 +879,85 @@ model FieldRule {
   @@id([entity, key])
   @@map("field_rule")
 }
+
+// ---------------------------------------------------------------- Email templates (Step 8)
+
+/// An email template: a 7-step outreach sequence, or the booking emails (email 1 and the reminder). Its wording
+/// lives in versions: every edit is a new draft; a second person approves it; only the approved version is used.
+model EmailTemplate {
+  id           String    @id @default(uuid()) @db.Uuid
+  /// sequence | booking
+  kind         String
+  name         String
+  description  String    @default("")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  createdById  String?   @map("created_by_id") @db.Uuid
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  archivedAt   DateTime? @map("archived_at")
+  archivedById String?   @map("archived_by_id") @db.Uuid
+
+  versions EmailTemplateVersion[]
+  rules    TemplateRule[]
+
+  @@index([kind, archivedAt])
+  @@map("email_template")
+}
+
+/// One version of a template's wording. draft → approved (by someone other than its author); approving a newer
+/// version marks the old one superseded; a draft can be discarded. Approved wording never changes: edits make a
+/// new draft. Contacts keep the version they were given, so edits only affect future contacts.
+model EmailTemplateVersion {
+  id              String    @id @default(uuid()) @db.Uuid
+  templateId      String    @map("template_id") @db.Uuid
+  version         Int
+  /// draft | approved | superseded | discarded
+  status          String    @default("draft")
+  /// [{ subject, body, delayDays }]: 7 steps for a sequence; 2 for booking (email 1, reminder).
+  steps           Json      @default("[]")
+  /// Used in place of {{touchOne}} when a brand has no verified touch-one observation.
+  openingFallback String    @default("") @map("opening_fallback")
+  /// What changed, written by the author.
+  note            String    @default("")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  createdById     String?   @map("created_by_id") @db.Uuid
+  createdByLabel  String    @map("created_by_label")
+  /// Everyone who wrote or edited this version's wording: none of them may approve it.
+  editorIds       String[]  @default([]) @map("editor_ids")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  approvedAt      DateTime? @map("approved_at")
+  approvedById    String?   @map("approved_by_id") @db.Uuid
+  approvedByLabel String?   @map("approved_by_label")
+  supersededAt    DateTime? @map("superseded_at")
+  discardedAt     DateTime? @map("discarded_at")
+
+  template EmailTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([templateId, version])
+  @@index([templateId, status])
+  @@map("email_template_version")
+}
+
+/// The template matrix: which template a brand gets by its category, sub-category and lane (routing). An empty
+/// string means "any". The most specific active rule wins: category + sub-category + lane, then category +
+/// sub-category, then category + lane, then category, then the default (all empty).
+model TemplateRule {
+  id              String    @id @default(uuid()) @db.Uuid
+  /// sequence | booking
+  kind            String
+  categoryCode    String    @default("") @map("category_code")
+  subCategoryCode String    @default("") @map("sub_category_code")
+  routingCode     String    @default("") @map("routing_code")
+  templateId      String    @map("template_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  createdById     String?   @map("created_by_id") @db.Uuid
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  updatedById     String?   @map("updated_by_id") @db.Uuid
+  /// Taken out of the matrix (kept for history). Only one active rule per cell.
+  removedAt       DateTime? @map("removed_at")
+  removedById     String?   @map("removed_by_id") @db.Uuid
+
+  template EmailTemplate @relation(fields: [templateId], references: [id])
+
+  @@index([kind, removedAt])
+  @@map("template_rule")
+}

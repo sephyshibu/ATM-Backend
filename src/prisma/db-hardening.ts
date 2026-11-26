@@ -47,10 +47,36 @@ const KNOWLEDGE_SQL = [
   `CREATE OR REPLACE TRIGGER dossier_no_delete BEFORE DELETE ON dossier FOR EACH ROW EXECUTE FUNCTION dossier_no_delete()`,
 ]
 
+// 4. Email templates keep their history: an approved (or replaced, or discarded) version's wording can't be changed,
+//    and templates, versions and matrix rules are never deleted.
+const TEMPLATES_SQL = [
+  `CREATE OR REPLACE FUNCTION template_version_keep() RETURNS trigger AS $$
+   BEGIN
+     IF TG_OP = 'DELETE' THEN
+       RAISE EXCEPTION 'template versions are kept, never deleted';
+     END IF;
+     IF OLD.status <> 'draft' AND (NEW.steps IS DISTINCT FROM OLD.steps OR NEW.opening_fallback IS DISTINCT FROM OLD.opening_fallback) THEN
+       RAISE EXCEPTION 'version % is %: its wording can''t change (save a new draft instead)', OLD.version, OLD.status;
+     END IF;
+     RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`,
+  `CREATE OR REPLACE TRIGGER template_version_keep BEFORE UPDATE OR DELETE ON email_template_version FOR EACH ROW EXECUTE FUNCTION template_version_keep()`,
+  `CREATE OR REPLACE FUNCTION template_no_delete() RETURNS trigger AS $$
+   BEGIN
+     RAISE EXCEPTION '% rows are archived or removed, never deleted', TG_TABLE_NAME;
+   END;
+   $$ LANGUAGE plpgsql`,
+  `CREATE OR REPLACE TRIGGER email_template_no_delete BEFORE DELETE ON email_template FOR EACH ROW EXECUTE FUNCTION template_no_delete()`,
+  `CREATE OR REPLACE TRIGGER template_rule_no_delete BEFORE DELETE ON template_rule FOR EACH ROW EXECUTE FUNCTION template_no_delete()`,
+]
+
 export async function hardenDatabase(prisma: PrismaClient) {
   for (const sql of APPEND_ONLY_SQL) await prisma.$executeRawUnsafe(sql)
   const [{ ready }] = await prisma.$queryRaw<{ ready: boolean }[]>`SELECT to_regclass('public.fact') IS NOT NULL AND to_regclass('public.dossier') IS NOT NULL AS ready`
   if (ready) for (const sql of KNOWLEDGE_SQL) await prisma.$executeRawUnsafe(sql)
+  const [{ templates }] = await prisma.$queryRaw<{ templates: boolean }[]>`SELECT to_regclass('public.email_template_version') IS NOT NULL AND to_regclass('public.template_rule') IS NOT NULL AS templates`
+  if (templates) for (const sql of TEMPLATES_SQL) await prisma.$executeRawUnsafe(sql)
 }
 
 export async function syncPermissionCatalogue(prisma: PrismaClient) {
