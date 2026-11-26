@@ -961,3 +961,115 @@ model TemplateRule {
   @@index([kind, removedAt])
   @@map("template_rule")
 }
+
+// ---------------------------------------------------------------- Booking pages and Google Calendar
+
+/// A person's connected Google Calendar. The refresh token is encrypted (AES-256-GCM, CALENDAR_ENC_KEY) and never
+/// leaves the server. Only the Google account the person signs in with can be connected.
+model CalendarConnection {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  /// GOOGLE
+  provider     String
+  email        String?
+  refreshToken String    @map("refresh_token")
+  scopes       String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  /// Disconnected (kept for history; the token is wiped).
+  removedAt    DateTime? @map("removed_at")
+
+  @@index([userId, provider, removedAt])
+  @@map("calendar_connection")
+}
+
+/// A bookable meeting with its public booking page (/book/<slug or token>): length, how far ahead (e.g. 20 days),
+/// the weekly hours, buffers, and the booking form's questions.
+model EventType {
+  id                String    @id @default(uuid()) @db.Uuid
+  /// The host: whose calendar and hours it books against.
+  hostUserId        String    @map("host_user_id") @db.Uuid
+  /// Unguessable link handle; keeps working after a rename.
+  token             String    @unique
+  /// Readable link handle from the name ("qualifying-call"); unique among event types.
+  slug              String    @unique
+  name              String
+  description       String    @default("")
+  durationMins      Int       @default(30) @map("duration_mins")
+  /// GOOGLE_MEET | CUSTOM_LINK | NONE
+  conferencing      String    @default("GOOGLE_MEET")
+  /// The meeting link used when conferencing is CUSTOM_LINK (e.g. a Zoom room).
+  customLink        String?   @map("custom_link")
+  bufferBeforeMins  Int       @default(0) @map("buffer_before_mins")
+  bufferAfterMins   Int       @default(0) @map("buffer_after_mins")
+  /// Soonest bookable time, minutes from now.
+  minNoticeMins     Int       @default(240) @map("min_notice_mins")
+  /// How many days ahead the page offers times.
+  dateRangeDays     Int       @default(20) @map("date_range_days")
+  slotIncrementMins Int       @default(30) @map("slot_increment_mins")
+  maxPerDay         Int?      @map("max_per_day")
+  /// The time zone the weekly hours are in (IANA).
+  timezone          String    @default("Asia/Kolkata")
+  /// The booking form: [{ id, label, type, required, options? }]. Name and email are always asked.
+  questions         Json      @default("[]")
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  archivedAt        DateTime? @map("archived_at")
+
+  availability AvailabilityRule[]
+  bookings     Booking[]
+
+  @@index([hostUserId, archivedAt])
+  @@map("event_type")
+}
+
+/// One weekly window: weekday 0 = Sunday … 6 = Saturday; minutes from midnight in the event type's time zone.
+model AvailabilityRule {
+  id          String    @id @default(uuid()) @db.Uuid
+  eventTypeId String    @map("event_type_id") @db.Uuid
+  weekday     Int
+  startMinute Int       @map("start_minute")
+  endMinute   Int       @map("end_minute")
+  eventType   EventType @relation(fields: [eventTypeId], references: [id])
+
+  @@index([eventTypeId])
+  @@map("availability_rule")
+}
+
+/// A booked meeting: who, when (UTC), the form answers, the calendar event and meeting link. Matched to a person
+/// (and their brand) in the CRM by email when one exists. Cancelled bookings are kept.
+model Booking {
+  id              String    @id @default(uuid()) @db.Uuid
+  eventTypeId     String    @map("event_type_id") @db.Uuid
+  hostUserId      String    @map("host_user_id") @db.Uuid
+  inviteeName     String    @map("invitee_name")
+  inviteeEmail    String    @map("invitee_email")
+  inviteeTimezone String?   @map("invitee_timezone")
+  /// Answers to the booking form, keyed by question id; `questions` keeps the form as it was asked.
+  answers         Json      @default("{}")
+  questions       Json      @default("[]")
+  startsAt        DateTime  @map("starts_at")
+  endsAt          DateTime  @map("ends_at")
+  /// confirmed | cancelled
+  status          String    @default("confirmed")
+  meetingUrl      String?   @map("meeting_url")
+  externalEventId String?   @map("external_event_id")
+  /// Unguessable token for the invitee's manage link (reschedule / cancel).
+  manageToken     String    @unique @map("manage_token")
+  personId        String?   @map("person_id") @db.Uuid
+  brandId         String?   @map("brand_id") @db.Uuid
+  cancelledAt     DateTime? @map("cancelled_at")
+  cancelledBy     String?   @map("cancelled_by")
+  cancelReason    String?   @map("cancel_reason")
+  rescheduledFrom DateTime? @map("rescheduled_from")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  eventType EventType @relation(fields: [eventTypeId], references: [id])
+
+  @@index([eventTypeId, startsAt])
+  @@index([hostUserId, startsAt])
+  @@index([inviteeEmail])
+  @@map("booking")
+}

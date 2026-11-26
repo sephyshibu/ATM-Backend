@@ -247,6 +247,33 @@ and anyone with "Import brands and products" can download it through a 5-minute 
 - The booking page link is Configuration → Booking emails → Booking page link (run `npx prisma db seed` once to add
   the setting; it never changes existing values).
 
+## Meetings: booking pages and Google Calendar
+
+Same feature as the Bizinnox CRM (Calendly-style), in **Meetings** (top menu):
+
+- **Booking pages**: a public link (`<FRONTEND_URL>/book/<name>`) where anyone with it picks a day and time in the
+  next N days (20 by default) within your weekly hours, minus your existing bookings and your Google Calendar busy
+  times, with breaks before/after, a minimum notice and an optional daily cap. Then they fill in the **booking
+  form** you set per page (short/long text, email, phone, link, number, yes/no, one choice; required or not).
+- **Bookings** (Meetings → Bookings): who, when, their answers, the meeting link, and the brand when their email
+  matches a person in Records. You can cancel (they're emailed).
+- **Google Calendar**: each person connects their own (only the Google account they sign in with). Each booking
+  becomes an event on it with a Google Meet link and Google emails the invite, so it's on the booker's calendar
+  too. The booker also gets our confirmation email with an "add to calendar" link and a link to **reschedule or
+  cancel** (`/booking/<token>`); the host gets an email for every booking, move and cancellation.
+- Safety: calendar tokens are encrypted (AES-256-GCM, `CALENDAR_ENC_KEY`) and never leave the server; the connect
+  request is signed; public pages are rate-limited; two people can't book the same time (a lock per host); nothing
+  is deleted (cancelled bookings and archived pages are kept); every booking, move and cancel is in the change log.
+
+Set up once:
+1. `.env`: `CALENDAR_ENC_KEY` (make one with `openssl rand -hex 32`) and `GOOGLE_CALENDAR_CALLBACK_URL`
+   (default `http://localhost:3000/api/v1/calendar/google/callback`).
+2. Google Cloud Console, same OAuth client as sign-in: add that callback under **Authorised redirect URIs**; enable
+   the **Google Calendar API**; on the consent screen add the scopes `calendar.events` and `calendar.freebusy`.
+3. `npx prisma migrate dev --name booking_pages`, restart, then Meetings → **Connect Google Calendar**.
+4. For the booking emails, put a page's link in Configuration → Booking emails → Booking page link
+   (`{{bookingLink}}`).
+
 ## API (all under `/api/v1`)
 
 | Method | Path | Permission |
@@ -280,6 +307,9 @@ and anyone with "Import brands and products" can download it through a 5-minute 
 | POST | `/knowledge/brands/:brandId/dossiers` (multipart `file`), `/knowledge/brands/:brandId/links`, `/knowledge/dossiers/:id/{retry,archive,restore}` | kb.enter_facts or kb.import |
 | POST | `/knowledge/dossiers/:id/check` (note, versionDate), `/knowledge/dossiers/:id/uncheck` (reason) | kb.enter_facts, kb.import, kb.verify_facts or kb.verify_own_facts; the person who added the dossier may check it (recorded as self-checked) |
 | PUT | `/knowledge/brands/:brandId/facts/:key` | kb.enter_facts |
+| GET/POST/PUT | `/scheduling/calendar`, `/scheduling/calendar/{connect,disconnect}`, `/scheduling/event-types[/:id[/archive|/restore]]`, `/scheduling/bookings[?when=past|cancelled]`, `/scheduling/bookings/:id/cancel` | records.view (your own only) |
+| GET | `/calendar/google/callback` (Google's redirect; signed state) | public |
+| GET/POST | `/public/book/:handle[/slots]`, `/public/booking/:token[/slots|/reschedule|/cancel]` | public, rate-limited |
 | GET | `/templates`, `/templates/:id`, `/templates/merge-fields`, `/templates/matrix`, `/templates/brands/:brandId` · POST `/templates/preview/:kind` | records.view |
 | POST | `/templates` · PUT `/templates/:id/draft` · POST `/templates/versions/:id/discard`, `/templates/:id/{archive,restore}` | templates.write |
 | POST | `/templates/versions/:id/approve` | templates.approve (your own version: recorded as self-approved) |

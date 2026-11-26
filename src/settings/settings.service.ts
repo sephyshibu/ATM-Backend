@@ -45,7 +45,9 @@ function validate(def: SettingDefinition, value: unknown): string | number | boo
         } catch {
           throw badRequest("Booking page link: enter the full address, starting with https://.")
         }
-        if (u.protocol !== "https:") throw badRequest("Booking page link: use an https:// address.")
+        // https everywhere; plain http only for a link on this computer (local testing).
+        const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname) || u.hostname.endsWith(".localhost")
+        if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) throw badRequest("Booking page link: use an https:// address (http:// works only for localhost while testing).")
         if (s.length > 500) throw badRequest("Booking page link is too long.")
         return u.toString()
       }

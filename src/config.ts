@@ -33,6 +33,12 @@ export function readConfig() {
       callbackUrl: env.GOOGLE_CALLBACK_URL ?? `http://localhost:${port}/${API_PREFIX}/auth/google/callback`,
       allowedDomains: list(env.GOOGLE_ALLOWED_DOMAINS),
     },
+    /** Google Calendar for booking pages: same OAuth client as sign-in, its own redirect URI and an encryption key. */
+    calendar: {
+      callbackUrl: (env.GOOGLE_CALENDAR_CALLBACK_URL ?? `http://localhost:${port}/${API_PREFIX}/calendar/google/callback`).trim(),
+      /** 64 hex characters (32 bytes). Encrypts stored calendar tokens and signs the connect request. */
+      encKey: (env.CALENDAR_ENC_KEY ?? "").trim(),
+    },
     seedAdminEmails: list(env.SEED_ADMIN_EMAILS),
     sessionDays: num(env.SESSION_DAYS, 7),
     inviteDays: num(env.INVITE_DAYS, 7),
@@ -62,6 +68,7 @@ export function readConfig() {
   }
   if (production && (!config.google.clientId || !config.google.clientSecret)) throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required when APP_ENV=production.")
   if (!!config.storage.accessKeyId !== !!config.storage.secretAccessKey) throw new Error("Set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or neither (to use the server's IAM role).")
+  if (config.calendar.encKey && !/^[0-9a-fA-F]{64}$/.test(config.calendar.encKey)) throw new Error("CALENDAR_ENC_KEY must be 64 hex characters (run: openssl rand -hex 32).")
   if (config.mail.transport === "smtp" && !config.mail.smtpHost) throw new Error("SMTP_HOST is required when MAIL_TRANSPORT=smtp.")
   return config
 }

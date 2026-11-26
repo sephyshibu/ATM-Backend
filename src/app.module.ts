@@ -15,6 +15,7 @@ import { MailModule } from "./mail/mail.module"
 import { PrismaModule } from "./prisma/prisma.module"
 import { RecordsModule } from "./records/records.module"
 import { RolesModule } from "./roles/roles.module"
+import { SchedulingModule } from "./scheduling/scheduling.module"
 import { SettingsModule } from "./settings/settings.module"
 import { TemplatesModule } from "./templates/templates.module"
 import { UsersModule } from "./users/users.module"
@@ -35,6 +36,7 @@ import { UsersModule } from "./users/users.module"
     RecordsModule,
     LeadsModule,
     TemplatesModule,
+    SchedulingModule,
   ],
   controllers: [HealthController],
   providers: [
