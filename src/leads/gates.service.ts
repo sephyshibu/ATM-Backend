@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common"
 import type { GateDefinition, GateResult, Prisma } from "@prisma/client"
 
 import { AuditService } from "../audit/audit.service"
-import { badRequest, forbidden, notFound } from "../common/errors"
+import { badRequest, conflict, forbidden, notFound } from "../common/errors"
 import { actorLabel, type RequestUser } from "../common/request-user"
 import { WorkTimeService } from "../jobs/work-time.service"
 import { PrismaService } from "../prisma/prisma.service"
@@ -21,6 +21,7 @@ export type GateValue = "pass" | "fail" | "unknown"
 export const GATE_VALUES: GateValue[] = ["pass", "fail", "unknown"]
 const SECTION = "Gates"
 const VALUE_LABEL: Record<string, string> = { pass: "Pass", fail: "Fail", unknown: "Not checked" }
+const FIELD_LABEL: Record<string, string> = { value: "Value", applies: "Needed", evidence: "Evidence", note: "Note" }
 
 export type Recommendation = { value: string; label: string; reasons: string[] }
 
@@ -119,7 +120,7 @@ export class GatesService {
 
   /** What the brand's own fields say for gates with a rule (01 category, 02 revenue band, 03 lane). */
   private async ruleChecks(db: Db, brandId: string) {
-    const b = await db.brand.findUnique({ where: { id: brandId }, select: { categoryCode: true, homeRevenueUsd: true, routingCode: true } })
+    const b = await db.brand.findUnique({ where: { id: brandId }, select: { categoryCode: true, homeRevenueUsd: true, homeRevenueMaxUsd: true, routingCode: true } })
     const min = await this.workTime.setting("gates.revenue_min_usd", 5_000_000)
     const max = await this.workTime.setting("gates.revenue_max_usd", 50_000_000)
     const usd = (n: number) => (n >= 1e6 ? `USD ${+(n / 1e6).toFixed(1)}M` : `USD ${n.toLocaleString("en-US")}`)
@@ -128,8 +129,18 @@ export class GatesService {
     out.category = b.categoryCode ? { value: "pass", why: "The brand has a category." } : { value: "unknown", why: "The brand has no category yet." }
     if (b.homeRevenueUsd === null) out.revenue_band = { value: "unknown", why: "No home revenue on the brand." }
     else {
-      const r = Number(b.homeRevenueUsd)
-      out.revenue_band = r >= min && r <= max ? { value: "pass", why: `${usd(r)} is inside ${usd(min)}–${usd(max)}.` } : { value: "fail", why: `${usd(r)} is outside ${usd(min)}–${usd(max)}.` }
+      // A range ("5–7M") passes when all of it is inside the band, fails when all of it is outside, and is
+      // unknown when it crosses the band's edge.
+      const lo = Number(b.homeRevenueUsd)
+      const hi = b.homeRevenueMaxUsd === null ? lo : Number(b.homeRevenueMaxUsd)
+      const shown = hi === lo ? usd(lo) : `${usd(lo)}–${usd(hi).replace("USD ", "")}`
+      const band = `${usd(min)}–${usd(max).replace("USD ", "")}`
+      out.revenue_band =
+        lo >= min && hi <= max
+          ? { value: "pass", why: `${shown} is inside ${band}.` }
+          : hi < min || lo > max
+            ? { value: "fail", why: `${shown} is outside ${band}.` }
+            : { value: "unknown", why: `${shown} crosses the edge of ${band}: check the figure.` }
     }
     out.lane = b.routingCode ? { value: "pass", why: "The brand has a lane." } : { value: "unknown", why: "The brand has no lane yet." }
     return out
@@ -196,6 +207,7 @@ export class GatesService {
           applies: r.applies,
           notApplicableReason: r.notApplicableReason,
           evidence: r.evidence,
+          note: r.note,
           source: r.source,
           setBy: setters.find((s) => s.id === r.setById)?.name ?? null,
           setAt: r.source === "default" ? null : r.setAt,
@@ -220,7 +232,7 @@ export class GatesService {
   async set(
     leadId: string,
     gateCode: string,
-    dto: { value?: string; applies?: boolean; evidence?: string; reasonCode?: string | null; reason?: string; source?: "manual" | "call" },
+    dto: { value?: string; applies?: boolean; evidence?: string; note?: string; reasonCode?: string | null; reason?: string; source?: "manual" | "call" },
     me: RequestUser,
     ip: string | null,
   ) {
@@ -238,10 +250,11 @@ export class GatesService {
       if (!GATE_VALUES.includes(value as GateValue)) throw badRequest("A gate is Pass, Fail or Unknown.")
       const applies = dto.applies === undefined ? r.applies : dto.applies
       const evidence = dto.evidence === undefined ? r.evidence : dto.evidence.trim().slice(0, 500)
+      const note = dto.note === undefined ? r.note : dto.note.trim().slice(0, 2000)
       const reason = dto.reason?.trim() || null
       const valueChanged = value !== r.value
       const tickChanged = applies !== r.applies
-      if (!valueChanged && !tickChanged && evidence === r.evidence) return
+      if (!valueChanged && !tickChanged && evidence === r.evidence && note === r.note) return
 
       let reasonLabel: string | null = null
       if (dto.reasonCode) {
@@ -255,12 +268,13 @@ export class GatesService {
       const source = dto.source ?? (def.stage === "call" && lead.stage === "hot" ? "call" : "manual")
       await tx.gateResult.update({
         where: { id: r.id },
-        data: { value, applies, notApplicableReason: applies ? null : reason, evidence, ...(valueChanged || tickChanged ? { source, setById: me.id, setAt: new Date() } : {}) },
+        data: { value, applies, notApplicableReason: applies ? null : reason, evidence, note, ...(valueChanged || tickChanged ? { source, setById: me.id, setAt: new Date() } : {}) },
       })
       const rows: { field: string; before: string; after: string }[] = []
       if (valueChanged) rows.push({ field: "value", before: VALUE_LABEL[r.value], after: VALUE_LABEL[value] })
       if (tickChanged) rows.push({ field: "applies", before: r.applies ? "Needed" : "Not needed", after: applies ? "Needed" : "Not needed" })
       if (evidence !== r.evidence) rows.push({ field: "evidence", before: r.evidence || "—", after: evidence || "—" })
+      if (note !== r.note) rows.push({ field: "note", before: r.note || "—", after: note || "—" })
       for (const c of rows) await tx.gateChange.create({ data: { leadId, gateCode, field: c.field, before: c.before, after: c.after, reasonCode: reasonLabel, reason, source, actorId: me.id, actorLabel: actorLabel(me) } })
       await this.audit.record(
         {
@@ -269,14 +283,30 @@ export class GatesService {
           action: `${lead.brand.name}: gate ${def.code} ${def.name}`,
           entityType: "lead",
           entityId: leadId,
-          before: rows.map((c) => `${c.field === "value" ? "Value" : c.field === "applies" ? "Needed" : "Evidence"}: ${c.before}`).join("\n"),
-          after: rows.map((c) => `${c.field === "value" ? "Value" : c.field === "applies" ? "Needed" : "Evidence"}: ${c.after}`).join("\n"),
+          before: rows.map((c) => `${FIELD_LABEL[c.field]}: ${c.before}`).join("\n"),
+          after: rows.map((c) => `${FIELD_LABEL[c.field]}: ${c.after}`).join("\n"),
           reason: [reasonLabel, reason].filter(Boolean).join(": ") || null,
           ip,
         },
         tx,
       )
     })
+  }
+
+  /** Gate notes from a Brand Register import: a filled cell replaces the note (logged in the gate's history). */
+  async importNotes(db: Db, brandId: string, notes: Record<string, string>, me: RequestUser) {
+    if (!Object.keys(notes).length) return
+    const lead = await db.lead.findFirst({ where: { brandId, closedAt: null }, orderBy: { createdAt: "desc" } })
+    if (!lead) return
+    await this.ensure(db, lead.id)
+    const results = await db.gateResult.findMany({ where: { leadId: lead.id } })
+    for (const [code, raw] of Object.entries(notes)) {
+      const note = raw.trim().slice(0, 2000)
+      const r = results.find((x) => x.gateCode === code)
+      if (!r || !note || r.note === note) continue
+      await db.gateResult.update({ where: { id: r.id }, data: { note } })
+      await db.gateChange.create({ data: { leadId: lead.id, gateCode: code, field: "note", before: r.note || "—", after: note, source: "import", actorId: me.id, actorLabel: actorLabel(me) } })
+    }
   }
 
   /** A Brand Register import updating an open lead's gates: only cells that differ, logged as the import. */
@@ -310,6 +340,26 @@ export class GatesService {
       const updated = await tx.gateDefinition.update({ where: { code }, data: { name, checks, active, updatedById: me.id } })
       await this.audit.record({ actor: me, section: SECTION, action: `Changed gate ${code}`, entityType: "gate_definition", entityId: code, before: lines.map((l) => l[0]).join("\n"), after: lines.map((l) => l[1]).join("\n"), reason: dto.reason?.trim() || null, ip }, tx)
       return updated
+    })
+  }
+
+  /**
+   * Adds a gate (Settings → Gates). It gets the next number, is checked by hand or from the Brand Register (no
+   * automatic rule), and counts in its stage's recommendation at once: until someone checks it, leads show it as
+   * not checked. Gates are switched off, never deleted.
+   */
+  async createDefinition(dto: { name: string; checks?: string; stage: string }, me: RequestUser, ip: string | null) {
+    const name = dto.name.trim()
+    if (!name) throw badRequest("Give the gate a name.")
+    if (!["desk", "call"].includes(dto.stage)) throw badRequest("Pick when the gate is checked: at the desk (before Target) or on the call.")
+    return this.prisma.$transaction(async (tx) => {
+      const all = await tx.gateDefinition.findMany()
+      if (all.some((g) => g.name.trim().toLowerCase() === name.toLowerCase())) throw conflict(`There's already a gate called ${name}.`)
+      const next = Math.max(0, ...all.map((g) => Number(g.code)).filter((n) => Number.isInteger(n))) + 1
+      const code = String(next).padStart(2, "0")
+      const created = await tx.gateDefinition.create({ data: { code, name, checks: dto.checks?.trim() ?? "", stage: dto.stage, rule: null, active: true, sortOrder: Math.max(0, ...all.map((g) => g.sortOrder)) + 10, updatedById: me.id } })
+      await this.audit.record({ actor: me, section: SECTION, action: `Added gate ${code} ${name}`, entityType: "gate_definition", entityId: code, after: [`Name: ${name}`, `Checked: ${dto.stage === "desk" ? "at the desk (before Target)" : "on the call"}`, created.checks && `Checks: ${created.checks}`].filter(Boolean).join("\n"), ip }, tx)
+      return created
     })
   }
 }

@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service"
 import { archiveData, checkCategory, checkListCode, describe, listLabels, restoreData } from "./records-common"
 import type { ArchiveDto, CreateProductDto, ProductFields, UpdateProductDto } from "./records.dto"
 import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
+import { FieldRulesService } from "./field-rules.service"
 import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
@@ -23,6 +24,7 @@ export class ProductsService {
     private readonly audit: AuditService,
     private readonly tags: TagsService,
     private readonly customFields: CustomFieldsService,
+    private readonly fieldRules: FieldRulesService,
   ) {}
 
   /** A brand's products with their tags, active first. */
@@ -45,6 +47,11 @@ export class ProductsService {
     Object.assign(data, await checkCategory(db, dto, current))
     if (dto.description !== undefined) data.description = dto.description
     if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "product", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
+    // Required fields (Settings → Fields): all on a new product; on an edit, none may be emptied.
+    const after = (k: keyof Prisma.ProductUncheckedUpdateInput, cur: unknown) => (data[k] !== undefined ? data[k] : cur)
+    const values: Record<string, unknown> = { sku: after("sku", current?.sku), category: after("categoryCode", current?.categoryCode), subCategory: after("subCategoryCode", current?.subCategoryCode), description: after("description", current?.description) }
+    const was: Record<string, unknown> | null = current ? { sku: current.sku, category: current.categoryCode, subCategory: current.subCategoryCode, description: current.description } : null
+    await this.fieldRules.assertFilled(db, "product", values, was)
     return data
   }
 

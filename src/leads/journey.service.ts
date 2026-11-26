@@ -6,6 +6,7 @@ import type { Lead, LeadMove, Prisma } from "@prisma/client"
 import { AuditService } from "../audit/audit.service"
 import { badRequest, conflict, forbidden, notFound } from "../common/errors"
 import { actorLabel, type RequestUser } from "../common/request-user"
+import { FactsService } from "../knowledge/facts.service"
 import { PrismaService } from "../prisma/prisma.service"
 import { GatesService, type GateValue } from "./gates.service"
 import { EVENTS, FLAG_LABELS, isClosed, LANE_LABELS, LANES, moveLabel, MOVES, type Lane, type MoveDef, type Pos, posLabel, STAGE_LABELS, STAGES, type Stage } from "./journey"
@@ -18,7 +19,7 @@ import type { EventDto, MoveDto, OpenLeadDto, OverrideDto, UndoDto } from "./lea
 const SECTION = "Leads"
 type Db = Prisma.TransactionClient
 
-const brandSelect = { id: true, name: true, domain: true, archivedAt: true, routingCode: true, tierCode: true, organisation: { select: { id: true, name: true, excluded: true } } } as const
+const brandSelect = { id: true, name: true, domain: true, archivedAt: true, routingCode: true, tierCode: true, kbStatus: true, organisation: { select: { id: true, name: true, excluded: true } } } as const
 
 const pos = (l: Pick<Lead, "stage" | "lane">): Pos => ({ stage: l.stage as Stage, lane: (l.lane as Lane | null) ?? null })
 const dateOnly = (s: string | undefined | null) => {
@@ -37,6 +38,7 @@ export class JourneyService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly gates: GatesService,
+    private readonly facts: FactsService,
   ) {}
 
   // ---------------------------------------------------------------- Reading
@@ -116,8 +118,9 @@ export class JourneyService {
   // ---------------------------------------------------------------- Checks
 
   /**
-   * Before Target (SRS MKT-03): a lane, the organisation not excluded, and a main contact with a verified email
-   * and a LinkedIn profile (what outreach needs). No tier and no signer named are warnings, never blocks.
+   * Before Target (SRS MKT-03): a lane, the organisation not excluded, a verified knowledge base (Configuration →
+   * Knowledge base can make it a warning instead), and a main contact with a verified email and a LinkedIn profile
+   * (what outreach needs). No tier, no signer named and stale facts are warnings, never blocks.
    */
   private async targetReady(db: Db, l: Pick<Lead, "brandId" | "personId">) {
     const blockers: string[] = []
@@ -140,6 +143,9 @@ export class JourneyService {
       if (!contact.linkedinUrl) blockers.push(`Add ${name}'s LinkedIn profile.`)
     }
     if (!b.people.some((x) => x.person.buyingRoleCode === "SIGNER")) warnings.push("No signer is named yet. It will be flagged when a call is booked.")
+    const kb = await this.facts.targetCheck(db, l.brandId)
+    blockers.push(...kb.blockers)
+    warnings.push(...kb.warnings)
     return { blockers, warnings }
   }
 

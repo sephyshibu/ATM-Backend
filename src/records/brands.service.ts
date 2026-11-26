@@ -10,6 +10,7 @@ import { ProductsService } from "./products.service"
 import { archiveData, checkCategory, checkCountries, checkCountry, checkListCode, describe, listLabels, normaliseDomain, normaliseUrl, restoreData, showCountries, showCountry, showUsd } from "./records-common"
 import type { ArchiveDto, BrandFields, CreateBrandDto, LinkPersonDto, UpdateBrandDto } from "./records.dto"
 import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
+import { FieldRulesService } from "./field-rules.service"
 import { GatesService } from "../leads/gates.service"
 import { JourneyService } from "../leads/journey.service"
 import { TagsService } from "./tags.service"
@@ -19,7 +20,7 @@ const SECTION = "Records"
 const personName = (p: { firstName: string; lastName: string }) => `${p.firstName} ${p.lastName}`.trim()
 
 /** A brand as the screens see it (revenue as a plain number). */
-const view = <T extends Brand>(b: T) => ({ ...b, homeRevenueUsd: b.homeRevenueUsd === null ? null : Number(b.homeRevenueUsd), archived: !!b.archivedAt })
+const view = <T extends Brand>(b: T) => ({ ...b, homeRevenueUsd: b.homeRevenueUsd === null ? null : Number(b.homeRevenueUsd), homeRevenueMaxUsd: b.homeRevenueMaxUsd === null ? null : Number(b.homeRevenueMaxUsd), archived: !!b.archivedAt })
 
 /**
  * Brands: the record everything else hangs on (leads, gates, outreach, deals). The website is the duplicate
@@ -36,6 +37,7 @@ export class BrandsService {
     private readonly customFields: CustomFieldsService,
     private readonly journey: JourneyService,
     private readonly gates: GatesService,
+    private readonly fieldRules: FieldRulesService,
   ) {}
 
   async list(archived: boolean) {
@@ -131,23 +133,25 @@ export class BrandsService {
     }
     if (dto.domain !== undefined) {
       const domain = normaliseDomain(dto.domain, "Brand website")
-      if (!domain) throw badRequest("Add the brand's website. It's how duplicates are caught.")
-      const clash = await db.brand.findFirst({ where: { domain, ...(current ? { id: { not: current.id } } : {}) }, orderBy: { archivedAt: { sort: "asc", nulls: "first" } } })
-      if (clash && !clash.archivedAt) throw conflict(`${clash.name} already uses ${domain}. Open that brand instead of adding it twice.`)
-      if (clash) throw conflict(`${clash.name} (archived) uses ${domain}. Restore it instead of adding it again.`)
+      if (domain) {
+        const clash = await db.brand.findFirst({ where: { domain, ...(current ? { id: { not: current.id } } : {}) }, orderBy: { archivedAt: { sort: "asc", nulls: "first" } } })
+        if (clash && !clash.archivedAt) throw conflict(`${clash.name} already uses ${domain}. Open that brand instead of adding it twice.`)
+        if (clash) throw conflict(`${clash.name} (archived) uses ${domain}. Restore it instead of adding it again.`)
+      }
       data.domain = domain
     }
     Object.assign(data, await checkCategory(db, dto, current))
-    // Every brand has a category and a sub-category: they can be changed, never emptied.
-    if (!current || dto.categoryCode !== undefined || dto.subCategoryCode !== undefined) {
-      const cat = data.categoryCode !== undefined ? data.categoryCode : current?.categoryCode
-      const sub = data.subCategoryCode !== undefined ? data.subCategoryCode : current?.subCategoryCode
-      if (!cat || !sub) throw badRequest("Pick the brand's category and sub-category.")
-    }
     if (dto.routingCode !== undefined) data.routingCode = (await checkListCode(db, "routing", dto.routingCode, current?.routingCode, "Lane")).code
     if (dto.tierCode !== undefined) data.tierCode = (await checkListCode(db, "tier", dto.tierCode, current?.tierCode, "Tier")).code
     if (dto.homeCountry !== undefined) data.homeCountry = checkCountry(dto.homeCountry, "Home country")
     if (dto.homeRevenueUsd !== undefined) data.homeRevenueUsd = dto.homeRevenueUsd === null ? null : BigInt(dto.homeRevenueUsd)
+    if (dto.homeRevenueMaxUsd !== undefined || dto.homeRevenueUsd !== undefined) {
+      const lo = dto.homeRevenueUsd !== undefined ? dto.homeRevenueUsd : current?.homeRevenueUsd === null || current?.homeRevenueUsd === undefined ? null : Number(current.homeRevenueUsd)
+      const hi = dto.homeRevenueMaxUsd !== undefined ? dto.homeRevenueMaxUsd : current?.homeRevenueMaxUsd === null || current?.homeRevenueMaxUsd === undefined ? null : Number(current.homeRevenueMaxUsd)
+      if (hi !== null && lo === null) throw badRequest("Home revenue: enter the low end of the range too.")
+      if (hi !== null && lo !== null && hi < lo) throw badRequest("Home revenue: the high end is lower than the low end.")
+      data.homeRevenueMaxUsd = hi === null || hi === lo ? null : BigInt(hi)
+    }
     if (dto.revenueYear !== undefined) data.revenueYear = dto.revenueYear
     if (dto.asianMarketsLive !== undefined) data.asianMarketsLive = checkCountries(dto.asianMarketsLive, "Asian markets")
     if (dto.ownerId !== undefined) {
@@ -160,6 +164,26 @@ export class BrandsService {
     if (dto.description !== undefined) data.description = dto.description
     if (dto.linkedinUrl !== undefined) data.linkedinUrl = normaliseUrl(dto.linkedinUrl, "LinkedIn")
     if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "brand", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
+    // Required fields (Settings → Fields): all of them on a new brand; on an edit, none may be emptied.
+    const after = <K extends keyof Prisma.BrandUncheckedUpdateInput>(k: K, cur: unknown) => (data[k] !== undefined ? data[k] : cur)
+    const values: Record<string, unknown> = {
+      website: after("domain", current?.domain),
+      category: after("categoryCode", current?.categoryCode),
+      subCategory: after("subCategoryCode", current?.subCategoryCode),
+      lane: after("routingCode", current?.routingCode),
+      tier: after("tierCode", current?.tierCode),
+      homeCountry: after("homeCountry", current?.homeCountry),
+      homeRevenueUsd: after("homeRevenueUsd", current?.homeRevenueUsd),
+      revenueYear: after("revenueYear", current?.revenueYear),
+      asianMarketsLive: after("asianMarketsLive", current?.asianMarketsLive),
+      owner: after("ownerId", current?.ownerId),
+      linkedin: after("linkedinUrl", current?.linkedinUrl),
+      description: after("description", current?.description),
+    }
+    const was: Record<string, unknown> | null = current
+      ? { website: current.domain, category: current.categoryCode, subCategory: current.subCategoryCode, lane: current.routingCode, tier: current.tierCode, homeCountry: current.homeCountry, homeRevenueUsd: current.homeRevenueUsd, revenueYear: current.revenueYear, asianMarketsLive: current.asianMarketsLive, owner: current.ownerId, linkedin: current.linkedinUrl, description: current.description }
+      : null
+    await this.fieldRules.assertFilled(db, "brand", values, was)
     return data
   }
 
@@ -183,6 +207,7 @@ export class BrandsService {
       { label: "Tier", before: before.tierCode, after: pick("tierCode"), show: label(tier) },
       { label: "Home country", before: before.homeCountry, after: pick("homeCountry"), show: showCountry },
       { label: "Home revenue", before: before.homeRevenueUsd, after: pick("homeRevenueUsd"), show: showUsd },
+      { label: "Home revenue (to)", before: before.homeRevenueMaxUsd, after: pick("homeRevenueMaxUsd"), show: showUsd },
       { label: "Revenue year", before: before.revenueYear, after: pick("revenueYear") },
       { label: "Asian markets live", before: before.asianMarketsLive, after: pick("asianMarketsLive"), show: showCountries },
       { label: "Owner", before: before.ownerId, after: pick("ownerId"), show: ownerName },
@@ -194,7 +219,6 @@ export class BrandsService {
 
   async create(dto: CreateBrandDto, me: RequestUser, ip: string | null) {
     if (!dto.name?.trim()) throw badRequest("Give the brand a name.")
-    if (!dto.domain?.trim()) throw badRequest("Add the brand's website. It's how duplicates are caught.")
     if (!dto.organisationId === !dto.newOrganisation) throw badRequest("Pick the organisation the brand belongs to, or add a new one.")
     const id = await this.prisma.$transaction(async (tx) => {
       let organisationId = dto.organisationId
@@ -205,7 +229,11 @@ export class BrandsService {
         organisationId = (await this.organisations.createIn(tx, dto.newOrganisation!, me, ip)).id
       }
       const data = (await this.prepare(dto, null, tx)) as Prisma.BrandUncheckedCreateInput
-      const b = await tx.brand.create({ data: { ...data, name: dto.name!.trim(), domain: data.domain as string, organisationId, source: "manual", createdById: me.id, updatedById: me.id } })
+      if (!data.domain) {
+        const twin = await tx.brand.findFirst({ where: { organisationId, name: { equals: dto.name!.trim(), mode: "insensitive" }, archivedAt: null } })
+        if (twin) throw conflict(`${twin.name} is already in this organisation. Open it instead of adding it twice.`)
+      }
+      const b = await tx.brand.create({ data: { ...data, name: dto.name!.trim(), domain: (data.domain as string | null | undefined) ?? null, organisationId, source: "manual", createdById: me.id, updatedById: me.id } })
       const t = await this.tags.set(tx, "brand", b.id, dto.tagCodes, me)
       const d = TagsService.merge(await this.changes({}, b, tx), t)
       await this.audit.record({ actor: me, section: SECTION, action: `Added the brand ${b.name}`, entityType: "brand", entityId: b.id, after: d.after || null, ip }, tx)
@@ -258,7 +286,7 @@ export class BrandsService {
       if (!b) throw notFound("That brand")
       if (!b.archivedAt) return
       if (b.organisation.archivedAt) throw badRequest(`Restore the organisation ${b.organisation.name} first.`)
-      const clash = await tx.brand.findFirst({ where: { domain: b.domain, archivedAt: null } })
+      const clash = b.domain ? await tx.brand.findFirst({ where: { domain: b.domain, archivedAt: null } }) : null
       if (clash) throw conflict(`${clash.name} now uses ${b.domain}. Archive or change one of them first.`)
       await tx.brand.update({ where: { id }, data: restoreData(me) })
       await this.audit.record({ actor: me, section: SECTION, action: `Restored the brand ${b.name}`, entityType: "brand", entityId: id, before: "Archived", after: "Active", ip }, tx)

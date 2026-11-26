@@ -1,5 +1,5 @@
 import { Transform } from "class-transformer"
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator"
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from "class-validator"
 
 const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value)
 const emptyToNull = ({ value }: { value: unknown }) => (typeof value === "string" && value.trim() === "" ? null : value)
@@ -52,8 +52,16 @@ export class SetGateDto {
   /** The checklist tick: false = not needed for this brand (needs a reason). */
   @IsOptional() @IsBoolean() applies?: boolean
   @Transform(trim) @IsOptional() @IsString() @MaxLength(500) evidence?: string
+  /** Free notes on the gate; changing them needs no reason. */
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(2000) note?: string
   @Transform(emptyToNull) @IsOptional() @IsString() @MaxLength(40) reasonCode?: string | null
   @Transform(trim) @IsOptional() @IsString() @MaxLength(1000) reason?: string
+}
+
+export class CreateGateDefinitionDto {
+  @Transform(trim) @IsString() @MinLength(2, { message: "Give the gate a name." }) @MaxLength(80) name!: string
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(500) checks?: string
+  @IsIn(["desk", "call"]) stage!: string
 }
 
 export class UpdateGateDefinitionDto {

@@ -108,6 +108,13 @@ export class BrandFields {
   @Max(1_000_000_000_000)
   homeRevenueUsd?: number | null
 
+  /** The high end, when the revenue is a range (homeRevenueUsd is then the low end). */
+  @IsOptional()
+  @IsInt({ message: "Home revenue (to): enter a whole number of US dollars." })
+  @Min(0)
+  @Max(1_000_000_000_000)
+  homeRevenueMaxUsd?: number | null
+
   @IsOptional()
   @IsInt()
   @Min(1990)
@@ -324,4 +331,12 @@ export class SaveMappingDto {
   @IsArray() @ArrayMaxSize(300) @IsString({ each: true }) @MaxLength(200, { each: true }) headers!: string[]
   /** File heading → field key. */
   @IsObject() mapping!: Record<string, string>
+  /** Field key → { cell value → the value it stands for } (e.g. tier: { "A": "Tier 1" }). */
+  @IsOptional() @IsObject() valueMaps?: Record<string, Record<string, string>>
+}
+
+export class SetFieldRuleDto {
+  @IsBoolean() required!: boolean
+  /** Optional: not asked on the screen; kept in the change log when sent. */
+  @Transform(trim) @IsOptional() @IsString() @MaxLength(500) reason?: string
 }

@@ -132,6 +132,101 @@ needs an override reason and is flagged on the lead and its move.
 
 Lane is stored in the `routing_code` column and the `routing` list (renaming them would touch existing data); every screen calls it Lane.
 
+## Real Brand Registers, required fields and new gates
+
+```bash
+npx prisma migrate dev --name field-rules-and-revenue-ranges   # adds field_rule, home_revenue_max_usd; website optional
+```
+
+- **The import reads research sheets as they are.** Revenue can be "Est. 5–7M", "$100–500 million" or "Not
+  disclosed" (a range is kept as low and high; text with no figure is left empty). A revenue year like
+  "Aug 31-2026" gives 2026. "Tony Costello - Founder CEO" becomes the name and the job title. Headcount ranges
+  ("11–50") and choices by their first word ("Low risk" → Low) are understood.
+- **A row is rejected only for**: a required field that's empty (Settings → Fields), a duplicate, or an
+  organisation problem. Any other cell that can't be read is left empty with a warning on that row: an untidy
+  contact is left out (the brand still comes in), and so are unreadable gates, facts and dossier links.
+- **Settings → Fields** has a Required switch on each built-in field (a reason is asked, and logged). Locked ones
+  (names, organisation) can't be switched. A rule applies to new and imported records, and stops a field being
+  emptied; records already saved without it stay as they are and can still be edited.
+- **Brand website can be made optional.** Without one, a brand is matched by its name within its organisation.
+- **New fields from the mapping step**: a column that isn't mapped can be added there as a brand or organisation
+  field, a knowledge-base fact or a gate (choices are taken from the column), and is mapped at once.
+- **Settings → Gates → Add a gate**: numbered after the last one, desk or call, checked by hand or from the
+  register. It counts in recommendations at once, so leads show it as not checked until someone checks it.
+
+## Knowledge base and dossiers (Phase 2, step 6)
+
+```bash
+npm install                           # adds @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner
+npx prisma migrate dev --name knowledge-base
+npx prisma db seed                    # the 12 fact fields, source tiers, reject reasons and settings
+```
+
+Each brand page has a **Knowledge base** card:
+
+- **Dossiers**, two ways in. *Upload* a PDF or Word file (.pdf, .docx, .doc), or *add a link*. The Brand
+  Register import also takes a **Dossier link** column (several links per cell are fine). Links are downloaded
+  by the background job `dossier.fetch` and stored like uploads; a link that needs a sign-in or opens a web page
+  is kept as a link with the exact reason, and can be fetched again.
+- **Facts**: the fields in Settings → Facts, grouped like the register (company, Asia position, regulatory,
+  outreach). Each fact has a value, a source, a source tier, an evidence date and optionally the dossier it came
+  from. The register import fills fact columns too (status Entered).
+- **Maker-checker**: a second person verifies or rejects each fact. Verifying your own fact needs
+  "Verify own facts" and marks it *self-verified*. A new value is a new version; a verified fact changes only
+  with a new source or date and is verified again. Nothing is overwritten or deleted (a database trigger refuses it).
+- **Status**: Verified when every required fact is verified; *needs a refresh* when one is past its refresh
+  date (evidence date + the field's refresh days), checked daily by `facts.stale`.
+- **Target**: blocked until the knowledge base is verified (Configuration → Knowledge base can make it a warning).
+
+### Dossier storage (S3)
+
+1. Create a bucket in **ap-southeast-1** (Singapore). Keep **Block all public access** on, turn on
+   **Bucket versioning**, and leave default encryption on (SSE-S3, or SSE-KMS with your key in `S3_KMS_KEY_ID`).
+   Optional but recommended: **GuardDuty Malware Protection for S3** on the bucket, to scan every file.
+2. Give the server access, with nothing more than this (on AWS, attach it to the server's IAM role; locally,
+   to an IAM user whose keys go in `.env`):
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       { "Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject"], "Resource": "arn:aws:s3:::YOUR-BUCKET/*" },
+       { "Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": "arn:aws:s3:::YOUR-BUCKET" }
+     ]
+   }
+   ```
+
+   No delete permission: the app never deletes files. Add `kms:GenerateDataKey` and `kms:Decrypt` on the key
+   if you use KMS.
+3. Set `S3_BUCKET` and `S3_REGION` (and the keys if not on AWS) in `.env`, restart, and check
+   **Settings → Facts → Storage**: it says whether the server can reach the bucket.
+
+How files are kept safe: uploads are held in memory (never on the server's disk) and checked by their content
+(PDF or Word only; Word files with macros and PDFs with scripts are refused); the S3 key is a random id, never
+the file name; each object is encrypted and carries an SHA-256 checksum S3 verifies; downloads are 5-minute
+signed links made only for signed-in people who can see the brand, and each download is in the change log.
+Links from a spreadsheet are fetched only over http(s) on ports 80/443, never to private network addresses
+(checked at connection time and after every redirect), with a time and size limit.
+
+Google Docs/Drive links (the dossier shared drive is private) are kept as links, never downloaded: each person
+opens them with their own Google sign-in, and someone marks the dossier as checked (who, when, the version date
+they read, a note). Confidential dossiers are never to be shared as "Anyone with the link".
+
+Folders inside the bucket (S3 has no real folders; these are key prefixes, created by the first file):
+
+```
+<S3_PREFIX>/
+  dossiers/<brand id>/<random id>.pdf|docx|doc                      knowledge-base dossiers
+  imports/brands/<yyyy-mm>/<import id>/<random id>.xlsx|csv         the original Brand Register file of each import
+  imports/products/<yyyy-mm>/<import id>/<random id>.xlsx|csv       the original product file of each import
+  _storage-check.txt                                                written by Settings → Facts → Check again
+```
+
+The original Excel/CSV of an import is sent by the browser right after the import and kept with it: only the
+person who ran the import can attach it, once, on the same day, and only the same file name; it must be a real
+.xlsx without macros or a plain-text .csv (25 MB at most). Its name, size and SHA-256 are on the import record,
+and anyone with "Import brands and products" can download it through a 5-minute link (logged).
+
 ## API (all under `/api/v1`)
 
 | Method | Path | Permission |
@@ -159,7 +254,16 @@ Lane is stored in the `routing_code` column and the `routing` list (renaming the
 | GET | `/jobs`, `/jobs/calendar` | settings.view |
 | POST | `/jobs/schedules/:name/run`, `/jobs/:id/retry`, `/jobs/test` | settings.edit |
 | GET | `/leads/:id/gates` · PATCH `/leads/:id/gates/:code` (desk or call gate permission) | records.view |
-| GET | `/gates` · PATCH `/gates/:code` | settings.view / settings.edit |
+| GET | `/gates` · POST `/gates` · PATCH `/gates/:code` | settings.view / settings.edit |
+| GET | `/records/fields/built-in` · PATCH `/records/fields/built-in/:entity/:key` | settings.view / settings.edit |
+| GET | `/knowledge/brands/:brandId`, `/knowledge/dossiers/:id/download`, `/knowledge/definitions` | records.view |
+| POST | `/knowledge/brands/:brandId/dossiers` (multipart `file`), `/knowledge/brands/:brandId/links`, `/knowledge/dossiers/:id/{retry,archive,restore}` | kb.enter_facts or kb.import |
+| POST | `/knowledge/dossiers/:id/check` (note, versionDate), `/knowledge/dossiers/:id/uncheck` (reason) | kb.enter_facts, kb.import, kb.verify_facts or kb.verify_own_facts; the person who added the dossier may check it (recorded as self-checked) |
+| PUT | `/knowledge/brands/:brandId/facts/:key` | kb.enter_facts |
+| POST | `/knowledge/facts/:id/verify`, `/knowledge/brands/:brandId/facts/verify` | kb.verify_facts (own: kb.verify_own_facts) |
+| POST | `/knowledge/facts/:id/reject` | kb.verify_facts |
+| POST | `/records/imports/:id/file` · GET `/records/imports/:id/file` | kb.import |
+| POST | `/knowledge/definitions` · PATCH `/knowledge/definitions/:key` · GET `/knowledge/storage` | settings.edit / settings.view |
 | GET | `/audit`, `/audit/sections` | audit.view |
 | GET | `/health` | public |
 

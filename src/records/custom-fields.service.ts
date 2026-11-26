@@ -29,25 +29,28 @@ const TYPE_LABELS: Record<FieldType, string> = {
   multi_choice: "Several choices",
 }
 
-/** The fields every brand and product has, for Settings → Fields (read-only there). */
-export type BuiltInField = { key: string; label: string; type: string; required: boolean; unique?: string; list?: string; help: string }
+/**
+ * A field every record has, for Settings → Fields. `required` is the default; Settings → Fields can switch it for any field that isn't
+ * `locked` (the ones the system can't work without, or where "required" means nothing, such as a yes/no).
+ */
+export type BuiltInField = { key: string; label: string; type: string; required: boolean; locked?: boolean; unique?: string; list?: string; help: string }
 
 export const BUILT_IN_FIELDS: Record<CustomEntity, BuiltInField[]> = {
   organisation: [
-    { key: "name", label: "Organisation name", type: "Short text", required: true, help: "The legal entity ATM signs with." },
+    { key: "name", label: "Organisation name", type: "Short text", required: true, locked: true, help: "The legal entity ATM signs with." },
     { key: "legalEntity", label: "Legal entity (registered name)", type: "Short text", required: false, help: "Used on agreements and invoices." },
     { key: "domain", label: "Organisation website", type: "Web address", required: false, unique: "Unique among organisations.", help: "" },
     { key: "hqCountry", label: "Head office country", type: "Country", required: false, help: "" },
     { key: "parent", label: "Parent group", type: "Organisation", required: false, help: "The bigger group it belongs to." },
     { key: "linkedin", label: "LinkedIn page", type: "Web address", required: false, help: "" },
-    { key: "excluded", label: "Excluded", type: "Yes / no", required: false, help: "Don't approach it or its brands and people. Changing it needs a reason." },
+    { key: "excluded", label: "Excluded", type: "Yes / no", required: false, locked: true, help: "Don't approach it or its brands and people. Changing it needs a reason." },
     { key: "notes", label: "Notes", type: "Long text", required: false, help: "" },
-    { key: "tags", label: "Tags", type: "Several choices", required: false, list: "Tags", help: "" },
+    { key: "tags", label: "Tags", type: "Several choices", required: false, locked: true, list: "Tags", help: "" },
   ],
   brand: [
-    { key: "organisation", label: "Organisation", type: "Organisation", required: true, help: "The legal entity ATM signs with. Imports create it from the organisation name." },
-    { key: "name", label: "Brand name", type: "Short text", required: true, help: "" },
-    { key: "website", label: "Brand website", type: "Web address", required: true, unique: "Unique among brands: it's how duplicates are caught.", help: "" },
+    { key: "organisation", label: "Organisation", type: "Organisation", required: true, locked: true, help: "The legal entity ATM signs with. Imports create it from the organisation name." },
+    { key: "name", label: "Brand name", type: "Short text", required: true, locked: true, help: "" },
+    { key: "website", label: "Brand website", type: "Web address", required: true, unique: "Unique among brands: it's how duplicates are caught.", help: "If you make it optional, brands without one are matched by name within their organisation." },
     { key: "category", label: "Category", type: "One choice", required: true, list: "Categories", help: "" },
     { key: "subCategory", label: "Sub-category", type: "One choice", required: true, list: "Sub-categories", help: "Must sit under the category." },
     { key: "lane", label: "Lane", type: "One choice", required: false, list: "Lanes", help: "Entry, Expansion or Re-entry." },
@@ -59,23 +62,23 @@ export const BUILT_IN_FIELDS: Record<CustomEntity, BuiltInField[]> = {
     { key: "owner", label: "Owner at ATM", type: "ATM user", required: false, help: "" },
     { key: "linkedin", label: "LinkedIn page", type: "Web address", required: false, help: "" },
     { key: "description", label: "About the brand", type: "Long text", required: false, help: "" },
-    { key: "tags", label: "Tags", type: "Several choices", required: false, list: "Tags", help: "New tags can be added while tagging." },
+    { key: "tags", label: "Tags", type: "Several choices", required: false, locked: true, list: "Tags", help: "New tags can be added while tagging." },
   ],
   product: [
-    { key: "name", label: "Product name", type: "Short text", required: true, unique: "Unique within its brand.", help: "" },
+    { key: "name", label: "Product name", type: "Short text", required: true, locked: true, unique: "Unique within its brand.", help: "" },
     { key: "sku", label: "SKU", type: "Short text", required: false, unique: "Unique within its brand.", help: "The brand's product code." },
     { key: "category", label: "Category", type: "One choice", required: false, list: "Categories", help: "Empty: the product takes the brand's." },
     { key: "subCategory", label: "Sub-category", type: "One choice", required: false, list: "Sub-categories", help: "Must sit under the category." },
     { key: "description", label: "Description", type: "Long text", required: false, help: "" },
-    { key: "tags", label: "Tags", type: "Several choices", required: false, list: "Tags", help: "New tags can be added while tagging." },
+    { key: "tags", label: "Tags", type: "Several choices", required: false, locked: true, list: "Tags", help: "New tags can be added while tagging." },
   ],
   person: [
-    { key: "organisation", label: "Organisation", type: "Organisation", required: true, help: "Where they work. A person can work on several of its brands." },
-    { key: "firstName", label: "First name", type: "Short text", required: true, help: "" },
+    { key: "organisation", label: "Organisation", type: "Organisation", required: true, locked: true, help: "Where they work. A person can work on several of its brands." },
+    { key: "firstName", label: "First name", type: "Short text", required: true, locked: true, help: "" },
     { key: "lastName", label: "Last name", type: "Short text", required: false, help: "" },
     { key: "jobTitle", label: "Job title", type: "Short text", required: false, help: "" },
-    { key: "email", label: "Work email", type: "Email", required: false, unique: "Unique among people.", help: "" },
-    { key: "emailStatus", label: "Email check", type: "One choice", required: false, help: "Not checked, Verified, Bounced or invalid." },
+    { key: "email", label: "Work email", type: "Email", required: true, unique: "Unique among people.", help: "" },
+    { key: "emailStatus", label: "Email check", type: "One choice", required: false, locked: true, help: "Not checked, Verified, Bounced or invalid." },
     { key: "phone", label: "Phone", type: "Short text", required: false, help: "" },
     { key: "country", label: "Country", type: "Country", required: false, help: "" },
     { key: "linkedin", label: "LinkedIn profile", type: "Web address", required: false, help: "" },

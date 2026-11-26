@@ -50,7 +50,12 @@ export const SETTINGS: SettingDef[] = [
   { key: "company.work_start", group: "Working time", label: "Working day starts at", description: "In the company time zone.", type: "time", default: "09:00" },
   { key: "company.work_end", group: "Working time", label: "Working day ends at", description: "In the company time zone.", type: "time", default: "18:00" },
 
+  // Knowledge base
+  { key: "kb.require_verified_for_target", group: "Knowledge base", label: "Target needs a verified knowledge base", description: "On: a brand moves to Target only when every required fact is verified. Off: it's a warning only.", type: "boolean", default: true },
+  { key: "kb.max_file_mb", group: "Knowledge base", label: "Largest dossier file", description: "PDF and Word files bigger than this are refused, uploaded or fetched from a link (50 MB at most).", type: "integer", unit: "MB", min: 1, max: 50, default: 25 },
+
   // Background jobs
+  { key: "jobs.facts_stale_time", group: "Background jobs", label: "Check knowledge bases for stale facts daily at", description: "Facts past their refresh date flag the brand's knowledge base. In the company time zone.", type: "time", default: "06:10" },
   { key: "jobs.lanes_tick_time", group: "Background jobs", label: "Check side-lane dates daily at", description: "Leads come back from Nurture, Parked and On hold on their date; Watch moves to Nurture; Rested brands are flagged when their rest is over. In the company time zone.", type: "time", default: "06:00" },
 
   // Company
@@ -200,6 +205,28 @@ export const LISTS: ListDef[] = [
     ],
   },
   {
+    key: "fact_source_tier",
+    label: "Fact source tiers",
+    description: "How strong a fact's source is. Picked when a fact is entered.",
+    values: [
+      { code: "COMPANY", label: "Company's own (report, website, filing)" },
+      { code: "THIRD_PARTY", label: "Trusted third party (database, press)" },
+      { code: "CALL", label: "Said on a call" },
+      { code: "ESTIMATE", label: "Estimate or inference" },
+    ],
+  },
+  {
+    key: "fact_reject_reason",
+    label: "Fact reject reasons",
+    description: "Picked when a checker rejects a fact.",
+    values: [
+      { code: "WRONG_VALUE", label: "Value doesn't match the source" },
+      { code: "WEAK_SOURCE", label: "Source isn't good enough" },
+      { code: "OUT_OF_DATE", label: "Evidence is too old" },
+      { code: "OTHER", label: "Other" },
+    ],
+  },
+  {
     key: "tag",
     label: "Tags",
     description: "Free labels for organisations, brands and products (e.g. Halal, Vegan, Trade show 2026). Anyone who can edit records can add a new tag while tagging; rename or retire them here.",
@@ -234,4 +261,25 @@ export const LIST_RELABELS: { listKey: string; code: string; from: string; to: s
   { listKey: "category", code: "FF", from: "Functional food", to: "Functional food & beverages" },
   { listKey: "category", code: "BE", from: "Beauty", to: "Beauty & wellness" },
   { listKey: "sub_category", code: "HW_VITAMINS", from: "Vitamins and supplements", to: "Vitamins and minerals" },
+]
+
+export type FactDef = { key: string; label: string; group: "company" | "asia" | "regulatory" | "outreach"; type: string; options?: string[]; required: boolean; refreshDays: number; help: string; brandField?: string }
+
+/**
+ * The knowledge-base form (design: "Upload 2: dossier and knowledge base"). The seed creates these once; labels,
+ * help, choices, required and refresh days are then edited in Settings → Facts.
+ */
+export const FACTS: FactDef[] = [
+  { key: "home_revenue", label: "Home revenue (USD)", group: "company", type: "usd", required: false, refreshDays: 365, help: "Latest full-year revenue in the home market. 12.5M or 12,500,000.", brandField: "homeRevenueUsd" },
+  { key: "revenue_year", label: "Revenue year", group: "company", type: "number", required: false, refreshDays: 365, help: "The year the revenue figure is for.", brandField: "revenueYear" },
+  { key: "headcount", label: "Headcount", group: "company", type: "number", required: false, refreshDays: 365, help: "" },
+  { key: "owner_parent", label: "Owner or parent company", group: "company", type: "text", required: false, refreshDays: 365, help: "Who owns the brand: founder-owned, a group, private equity…" },
+  { key: "markets_live", label: "Asian markets live", group: "asia", type: "long_text", required: false, refreshDays: 180, help: "Where the brand sells in Asia today, and how.", brandField: "asianMarketsLive" },
+  { key: "appointed_vs_grey", label: "Appointed vs grey market", group: "asia", type: "choice", options: ["Appointed partners", "Grey market only", "Both", "Neither"], required: false, refreshDays: 180, help: "" },
+  { key: "named_distributors", label: "Named distributors", group: "asia", type: "long_text", required: false, refreshDays: 180, help: "Distributors by market." },
+  { key: "registration_holder", label: "Registration holder", group: "asia", type: "text", required: false, refreshDays: 180, help: "Who holds the product registrations in Asia." },
+  { key: "halal_exposure", label: "Halal exposure", group: "regulatory", type: "choice", options: ["Certified", "In progress", "Not certified", "Not relevant"], required: false, refreshDays: 365, help: "" },
+  { key: "hsa_claim_flag", label: "HSA claim or dosage flag", group: "regulatory", type: "yes_no", required: false, refreshDays: 365, help: "Claims or doses that would need attention in Singapore." },
+  { key: "classification_risk", label: "Classification risk", group: "regulatory", type: "choice", options: ["Low", "Medium", "High"], required: false, refreshDays: 365, help: "Risk the products are classed as medicines rather than supplements." },
+  { key: "touch_one", label: "Touch-one observation", group: "outreach", type: "long_text", required: false, refreshDays: 90, help: "The specific, recent observation the first email opens with." },
 ]

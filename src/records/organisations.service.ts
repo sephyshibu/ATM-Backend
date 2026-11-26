@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service"
 import { archiveData, checkCountry, checkListCode, describe, normaliseDomain, normaliseUrl, restoreData, showCountry } from "./records-common"
 import type { ArchiveDto, CreateOrganisationDto, UpdateOrganisationDto } from "./records.dto"
 import { CustomFieldsService, showCustom, type CustomValues } from "./custom-fields.service"
+import { FieldRulesService } from "./field-rules.service"
 import { TagsService } from "./tags.service"
 
 const SECTION = "Records"
@@ -23,6 +24,7 @@ export class OrganisationsService {
     private readonly audit: AuditService,
     private readonly tags: TagsService,
     private readonly customFields: CustomFieldsService,
+    private readonly fieldRules: FieldRulesService,
   ) {}
 
   async list(archived: boolean) {
@@ -78,6 +80,22 @@ export class OrganisationsService {
       data.exclusionReason = dto.exclusionReason.trim()
     }
     if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "organisation", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
+    // Required fields (Settings → Fields): all on a new organisation; on an edit, none may be emptied.
+    const after = (k: keyof Prisma.OrganisationUncheckedUpdateInput, cur: unknown) => (data[k] !== undefined ? data[k] : cur)
+    const values: Record<string, unknown> = {
+      legalEntity: after("legalEntity", current?.legalEntity),
+      domain: after("domain", current?.domain),
+      hqCountry: after("hqCountry", current?.hqCountry),
+      parent: after("parentId", current?.parentId),
+      linkedin: after("linkedinUrl", current?.linkedinUrl),
+      notes: after("notes", current?.notes),
+    }
+    const was: Record<string, unknown> | null = current
+      ? { legalEntity: current.legalEntity, domain: current.domain, hqCountry: current.hqCountry, parent: current.parentId, linkedin: current.linkedinUrl, notes: current.notes }
+      : exceptId
+        ? values
+        : null
+    await this.fieldRules.assertFilled(db, "organisation", values, was)
     return data
   }
 

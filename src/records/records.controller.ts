@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req } from "@nestjs/common"
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UploadedFile, UseInterceptors } from "@nestjs/common"
+import { FileInterceptor } from "@nestjs/platform-express"
 
 import { COUNTRY_CODES } from "../common/countries"
 import { CurrentUser, RequirePermissions } from "../common/decorators"
@@ -6,8 +7,11 @@ import { badRequest } from "../common/errors"
 import { requestIp, type AppRequest, type RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { BrandsService } from "./brands.service"
-import { BUILT_IN_FIELDS, CustomFieldsService } from "./custom-fields.service"
+import { CustomFieldsService } from "./custom-fields.service"
+import { FieldRulesService } from "./field-rules.service"
+import { IMPORT_FILE_MAX_BYTES, ImportFilesService } from "./import-files.service"
 import { ImportService } from "./import.service"
+import type { UploadedFile as Uploaded } from "../knowledge/dossiers.service"
 import { OrganisationsService } from "./organisations.service"
 import { PeopleService } from "./people.service"
 import { ProductsService } from "./products.service"
@@ -21,6 +25,7 @@ import {
   CreateTagDto,
   ImportDto,
   SaveMappingDto,
+  SetFieldRuleDto,
   LinkPersonDto,
   UpdateBrandDto,
   UpdateCustomFieldDto,
@@ -31,7 +36,7 @@ import {
 import { TagsService } from "./tags.service"
 
 /** The pick-lists the Records screens use (retired values are included so old records still show their names). */
-const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag", "disqualify_reason", "override_reason", "gate_change_reason"]
+const LIST_KEYS = ["category", "sub_category", "routing", "tier", "buying_role", "consent_basis", "archive_reason", "tag", "disqualify_reason", "override_reason", "gate_change_reason", "fact_source_tier", "fact_reject_reason"]
 
 // Records: brands, organisations and people. Looking needs "View brands and people"; adding and
 // changing needs "Edit brands and people"; archiving and restoring needs "Archive and restore records".
@@ -47,6 +52,8 @@ export class RecordsController {
     private readonly tags: TagsService,
     private readonly customFields: CustomFieldsService,
     private readonly imports: ImportService,
+    private readonly fieldRules: FieldRulesService,
+    private readonly importFiles: ImportFilesService,
   ) {}
 
   // ---------------------------------------------------------------- Fields (Settings → Fields)
@@ -57,11 +64,18 @@ export class RecordsController {
     return this.customFields.list()
   }
 
-  /** The fields every brand and product has; shown read-only in Settings → Fields. */
+  /** The fields every record has, with whether each is required now (and whether that can be switched). */
   @Get("fields/built-in")
   @RequirePermissions("settings.view")
   builtInFields() {
-    return BUILT_IN_FIELDS
+    return this.fieldRules.list()
+  }
+
+  /** Makes a built-in field required or optional (with a reason). */
+  @Patch("fields/built-in/:entity/:key")
+  @RequirePermissions("settings.edit")
+  setFieldRule(@Param("entity") entity: string, @Param("key") key: string, @Body() dto: SetFieldRuleDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.fieldRules.set(entity, key, dto.required, dto.reason ?? "", me, requestIp(req))
   }
 
   @Post("fields")
@@ -94,6 +108,24 @@ export class RecordsController {
   @RequirePermissions("records.view")
   importHistory(@Query("kind") kind?: string, @Query("brandId") brandId?: string) {
     return this.imports.history(kind === "brands" || kind === "products" ? kind : undefined, brandId && /^[0-9a-f-]{36}$/i.test(brandId) ? brandId : undefined)
+  }
+
+  /**
+   * Keeps the original Excel/CSV file of an import in S3 (multipart field "file"). Sent by the browser right after
+   * the import; held in memory, never on the server's disk.
+   */
+  @Post("imports/:id/file")
+  @RequirePermissions("kb.import")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: IMPORT_FILE_MAX_BYTES, files: 1, fields: 2, parts: 3 } }))
+  attachImportFile(@Param("id", ParseUUIDPipe) id: string, @UploadedFile() file: Uploaded | undefined, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.importFiles.attach(id, file, me, requestIp(req))
+  }
+
+  /** A five-minute download link for an import's original file. */
+  @Get("imports/:id/file")
+  @RequirePermissions("kb.import")
+  importFile(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.importFiles.download(id, me, requestIp(req))
   }
 
   @Get("import/:kind/mappings")
@@ -189,15 +221,16 @@ export class RecordsController {
   @Get("options")
   @RequirePermissions("records.view")
   async options() {
-    const [values, users, fields] = await Promise.all([
+    const [values, users, fields, required] = await Promise.all([
       this.prisma.listValue.findMany({ where: { listKey: { in: LIST_KEYS } }, orderBy: [{ sortOrder: "asc" }, { label: "asc" }], include: { parent: { select: { code: true } } } }),
       this.prisma.user.findMany({ where: { status: { not: "deactivated" } }, orderBy: { name: "asc" }, select: { id: true, name: true, email: true } }),
       this.customFields.list(),
+      this.fieldRules.requiredAll(),
     ])
     const lists = Object.fromEntries(
       LIST_KEYS.map((k) => [k, values.filter((v) => v.listKey === k).map((v) => ({ code: v.code, label: v.label, parentCode: v.parent?.code ?? null, retired: !!v.retiredAt }))]),
     )
-    return { lists, countries: [...COUNTRY_CODES], owners: users, fields }
+    return { lists, countries: [...COUNTRY_CODES], owners: users, fields, required }
   }
 
   // ---------------------------------------------------------------- Brands

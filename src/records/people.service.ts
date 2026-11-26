@@ -7,6 +7,7 @@ import type { RequestUser } from "../common/request-user"
 import { PrismaService } from "../prisma/prisma.service"
 import { archiveData, checkCountry, checkListCode, describe, listLabels, normaliseEmail, normaliseUrl, restoreData, showCountry } from "./records-common"
 import { CustomFieldsService, type CustomValues } from "./custom-fields.service"
+import { FieldRulesService } from "./field-rules.service"
 import type { ArchiveDto, CreatePersonDto, PersonFields, UpdatePersonDto } from "./records.dto"
 
 const SECTION = "Records"
@@ -27,6 +28,7 @@ export class PeopleService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly customFields: CustomFieldsService,
+    private readonly fieldRules: FieldRulesService,
   ) {}
 
   async list(archived: boolean, organisationId?: string) {
@@ -63,9 +65,7 @@ export class PeopleService {
       if (email !== current?.email && dto.emailStatus === undefined) data.emailStatus = "unknown"
     }
     if (dto.emailStatus !== undefined) data.emailStatus = dto.emailStatus
-    // Every person needs a work email (outreach and duplicate checks use it); it can be changed, never emptied.
     const emailAfter = data.email !== undefined ? data.email : (current?.email ?? null)
-    if (!emailAfter && (!current || dto.email !== undefined)) throw badRequest("Add the work email.")
     const statusAfter = (data.emailStatus as string | undefined) ?? current?.emailStatus ?? "unknown"
     if (statusAfter !== "unknown" && !emailAfter) throw badRequest("Add the email before marking it verified or bounced.")
     if (dto.phone !== undefined) data.phone = dto.phone
@@ -75,6 +75,23 @@ export class PeopleService {
     if (dto.consentCode !== undefined) data.consentCode = (await checkListCode(db, "consent_basis", dto.consentCode, current?.consentCode, "Consent")).code
     if (dto.notes !== undefined) data.notes = dto.notes
     if (dto.custom !== undefined || !current) data.custom = (await this.customFields.apply(db, "person", dto.custom, current?.custom ?? {}, !current)).values as Prisma.InputJsonValue
+    // Required fields (Settings → Fields; the work email by default): all on a new person; on an edit, none may be emptied.
+    const after = (k: keyof Prisma.PersonUncheckedUpdateInput, cur: unknown) => (data[k] !== undefined ? data[k] : cur)
+    const values: Record<string, unknown> = {
+      lastName: after("lastName", current?.lastName),
+      jobTitle: after("jobTitle", current?.jobTitle),
+      email: emailAfter,
+      phone: after("phone", current?.phone),
+      country: after("country", current?.country),
+      linkedin: after("linkedinUrl", current?.linkedinUrl),
+      buyingRole: after("buyingRoleCode", current?.buyingRoleCode),
+      consent: after("consentCode", current?.consentCode),
+      notes: after("notes", current?.notes),
+    }
+    const was: Record<string, unknown> | null = current
+      ? { lastName: current.lastName, jobTitle: current.jobTitle, email: current.email, phone: current.phone, country: current.country, linkedin: current.linkedinUrl, buyingRole: current.buyingRoleCode, consent: current.consentCode, notes: current.notes }
+      : null
+    await this.fieldRules.assertFilled(db, "person", values, was)
     return data
   }
 

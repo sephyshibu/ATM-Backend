@@ -311,14 +311,17 @@ model Brand {
   id               String    @id @default(uuid()) @db.Uuid
   organisationId   String    @map("organisation_id") @db.Uuid
   name             String
-  /// The brand's website, normalised. Required; unique among active brands (the duplicate check).
-  domain           String
+  /// The brand's website, normalised; unique among active brands (the duplicate check). Required unless
+  /// Settings → Fields says otherwise; without one, duplicates are caught by name within the organisation.
+  domain           String?
   categoryCode     String?   @map("category_code")
   subCategoryCode  String?   @map("sub_category_code")
   routingCode      String?   @map("routing_code")
   /// ISO 3166-1 alpha-2 of the home market.
   homeCountry      String?   @map("home_country")
+  /// Home revenue in whole USD. For a range ("5–7M") this is the low end and homeRevenueMaxUsd the high end.
   homeRevenueUsd   BigInt?   @map("home_revenue_usd")
+  homeRevenueMaxUsd BigInt?  @map("home_revenue_max_usd")
   revenueYear      Int?      @map("revenue_year")
   /// Asian markets where the brand already sells (ISO codes).
   asianMarketsLive String[]  @default([]) @map("asian_markets_live")
@@ -339,14 +342,22 @@ model Brand {
   updatedById      String?   @map("updated_by_id") @db.Uuid
   archivedAt       DateTime? @map("archived_at")
   archivedById     String?   @map("archived_by_id") @db.Uuid
+  /// The knowledge base: not_started | in_progress (facts missing or not verified) | verified (every required
+  /// fact verified and fresh) | stale (verified, but a required fact is past its refresh date). Recalculated by
+  /// the system whenever a fact changes and every day; never set by hand.
+  kbStatus         String    @default("not_started") @map("kb_status")
+  kbVerifiedAt     DateTime? @map("kb_verified_at")
 
   organisation Organisation  @relation(fields: [organisationId], references: [id])
   owner        User?         @relation("BrandOwner", fields: [ownerId], references: [id])
   people       BrandPerson[]
   products     Product[]
   leads        Lead[]
+  dossiers     Dossier[]
+  facts        Fact[]
 
   @@index([organisationId])
+  @@index([kbStatus])
   @@index([domain])
   @@index([archivedAt])
   @@map("brand")
@@ -497,6 +508,8 @@ model ImportMapping {
   headers     String[]  @default([])
   /// File heading → field key.
   mapping     Json      @default("{}")
+  /// Field key → { cell value (lower case) → the value it stands for }, e.g. tier: { "a": "Tier 1" }.
+  valueMaps   Json      @default("{}") @map("value_maps")
   createdAt   DateTime  @default(now()) @map("created_at")
   createdById String?   @map("created_by_id") @db.Uuid
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -524,6 +537,17 @@ model ImportBatch {
   rejected      Json     @default("[]")
   createdAt     DateTime @default(now()) @map("created_at")
   createdById   String?  @map("created_by_id") @db.Uuid
+  /// The original Excel/CSV file, kept in S3 at <prefix>/imports/<kind>/<yyyy-mm>/<batch id>/<random id>.<ext>.
+  /// Empty for imports made before files were kept, or while storage isn't set up.
+  fileKey       String?   @unique @map("file_key")
+  /// xlsx | csv
+  fileType      String?   @map("file_type")
+  fileSizeBytes Int?      @map("file_size_bytes")
+  fileSha256    String?   @map("file_sha256")
+  /// stored | failed
+  fileStatus    String?   @map("file_status")
+  fileStatusNote String?  @map("file_status_note")
+  fileStoredAt  DateTime? @map("file_stored_at")
 
   @@index([kind, createdAt])
   @@map("import_batch")
@@ -672,6 +696,8 @@ model GateResult {
   notApplicableReason String?  @map("not_applicable_reason")
   /// One line of evidence: where the value comes from.
   evidence            String   @default("")
+  /// Free notes on this gate for this brand (what was found, what to check next). Changes are in the gate's history.
+  note                String   @default("")
   /// default | auto (from the brand's details) | import | manual | call
   source              String   @default("default")
   setById             String?  @map("set_by_id") @db.Uuid
@@ -686,7 +712,7 @@ model GateChange {
   id         String   @id @default(uuid()) @db.Uuid
   leadId     String   @map("lead_id") @db.Uuid
   gateCode   String   @map("gate_code")
-  /// value | applies | evidence
+  /// value | applies | evidence | note
   field      String
   before     String?
   after      String?
@@ -699,4 +725,157 @@ model GateChange {
 
   @@index([leadId, at])
   @@map("gate_change")
+}
+
+// ---------------------------------------------------------------- Knowledge base (dossiers and facts)
+
+/// A brand's research file (the dossier): a PDF or Word file uploaded by hand, or a link from the Brand Register
+/// that the system fetches into storage. Files live in Amazon S3 (private bucket, encrypted); only the key is
+/// kept here. Rows are archived, never deleted, and the stored file is never removed.
+model Dossier {
+  id            String    @id @default(uuid()) @db.Uuid
+  brandId       String    @map("brand_id") @db.Uuid
+  /// file (uploaded) | link (from the register or added by hand)
+  kind          String
+  /// What people see: the file name, or the link's name.
+  title         String
+  /// For links: the address as given.
+  sourceUrl     String?   @map("source_url")
+  /// The S3 object key, e.g. dossiers/<brand id>/<uuid>.pdf. Never built from the file name.
+  fileKey       String?   @unique @map("file_key")
+  fileName      String?   @map("file_name")
+  /// pdf | docx | doc
+  fileType      String?   @map("file_type")
+  contentType   String?   @map("content_type")
+  sizeBytes     Int?      @map("size_bytes")
+  /// SHA-256 of the file: the same file isn't attached twice to one brand, and S3 checks it on upload.
+  sha256        String?
+  /// uploading | queued | fetching | stored | link_only (couldn't be fetched: kept as a link) | failed
+  status        String
+  /// Why a link couldn't be fetched, or why an upload failed.
+  statusNote    String?   @map("status_note")
+  fetchAttempts Int       @default(0) @map("fetch_attempts")
+  /// upload | import | link
+  origin        String
+  importBatchId String?   @map("import_batch_id") @db.Uuid
+  note          String    @default("")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  createdById   String?   @map("created_by_id") @db.Uuid
+  storedAt      DateTime? @map("stored_at")
+  archivedAt    DateTime? @map("archived_at")
+  archivedById  String?   @map("archived_by_id") @db.Uuid
+  archiveReason String?   @map("archive_reason")
+  /// For Google Docs/Drive links: the Google file id, so the same file isn't added twice to a brand.
+  googleFileId  String?   @map("google_file_id")
+  /// "Mark as checked": a person opened the dossier (with their own access) and confirmed it is the right, correct
+  /// file. The person who added it may check it too; that is recorded as self-checked.
+  checkedAt        DateTime? @map("checked_at")
+  checkedById      String?   @map("checked_by_id") @db.Uuid
+  checkedByLabel   String?   @map("checked_by_label")
+  checkNote        String    @default("") @map("check_note")
+  /// The version they read: the "Last edit" date shown in Google, or the file's date.
+  checkVersionDate DateTime? @map("check_version_date") @db.Date
+  selfChecked      Boolean   @default(false) @map("self_checked")
+
+  brand Brand  @relation(fields: [brandId], references: [id])
+  facts Fact[]
+
+  @@index([brandId, archivedAt])
+  @@index([sha256])
+  @@index([brandId, googleFileId])
+  @@map("dossier")
+}
+
+/// One field of the knowledge-base form (e.g. Home revenue, Markets live, Halal exposure). Edited in
+/// Settings → Facts; the key and type never change once made, and fields are switched off rather than deleted.
+model FactDefinition {
+  key         String   @id
+  label       String
+  /// company | asia | regulatory | outreach
+  groupCode   String   @map("group_code")
+  help        String   @default("")
+  /// text | long_text | number | usd | date | yes_no | choice | multi_choice
+  type        String
+  options     String[] @default([])
+  /// Required facts must all be verified (and fresh) before the knowledge base is verified.
+  required    Boolean  @default(false)
+  /// Days a fact stays fresh after its evidence date; then it is flagged stale.
+  refreshDays Int      @default(180) @map("refresh_days")
+  /// A brand field that pre-fills this fact (homeRevenueUsd | revenueYear | asianMarketsLive), and that a
+  /// Brand Register column for that field also fills on import.
+  brandField  String?  @map("brand_field")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  facts Fact[]
+
+  @@map("fact_definition")
+}
+
+/// One version of one fact about a brand. Entering a new value adds a new row and marks the old one superseded,
+/// so nothing is overwritten and the history stays complete. Maker-checker: the person who entered a fact verifies
+/// it only with "Verify own facts", and it is then marked self-verified. A database trigger refuses changes to the
+/// value, source and evidence of a saved row, and refuses deletes.
+model Fact {
+  id              String    @id @default(uuid()) @db.Uuid
+  brandId         String    @map("brand_id") @db.Uuid
+  factKey         String    @map("fact_key")
+  value           Json
+  /// Where it comes from: dossier page or section, a link, a report.
+  source          String
+  /// From Lists → Fact source tiers (e.g. Company's own, Trusted third party, Estimate).
+  sourceTierCode  String?   @map("source_tier_code")
+  /// The dossier it was taken from, if any.
+  dossierId       String?   @map("dossier_id") @db.Uuid
+  /// The date of the evidence (the report, the page, the research).
+  evidenceDate    DateTime  @map("evidence_date") @db.Date
+  /// evidenceDate + the definition's refresh days: after this the fact is stale.
+  refreshDue      DateTime  @map("refresh_due") @db.Date
+  /// entered | verified | rejected
+  status          String    @default("entered")
+  /// manual | import
+  origin          String    @default("manual")
+  note            String    @default("")
+  importBatchId   String?   @map("import_batch_id") @db.Uuid
+  enteredById     String?   @map("entered_by_id") @db.Uuid
+  enteredByLabel  String    @map("entered_by_label")
+  enteredAt       DateTime  @default(now()) @map("entered_at")
+  verifiedById    String?   @map("verified_by_id") @db.Uuid
+  verifiedByLabel String?   @map("verified_by_label")
+  verifiedAt      DateTime? @map("verified_at")
+  /// Verified by the same person who entered it (allowed with "Verify own facts").
+  selfVerified    Boolean   @default(false) @map("self_verified")
+  rejectedById    String?   @map("rejected_by_id") @db.Uuid
+  rejectedByLabel String?   @map("rejected_by_label")
+  rejectedAt      DateTime? @map("rejected_at")
+  rejectReason    String?   @map("reject_reason")
+  /// Set when a newer version replaces it. The current fact is the one with no supersededAt: one per brand and key,
+  /// kept so by locking the brand row while a fact is written.
+  supersededAt    DateTime? @map("superseded_at")
+
+  brand      Brand          @relation(fields: [brandId], references: [id])
+  definition FactDefinition @relation(fields: [factKey], references: [key])
+  dossier    Dossier?       @relation(fields: [dossierId], references: [id])
+
+  @@index([brandId, factKey, enteredAt])
+  @@index([status, refreshDue])
+  @@map("fact")
+}
+
+/// Settings → Fields: whether a built-in field is required. Only fields the code allows to switch are stored, and
+/// only once someone changes them (until then the code's default applies). Existing records aren't touched: the
+/// rule applies when a record is added, imported, or when that field is edited.
+model FieldRule {
+  /// organisation | brand | product | person
+  entity      String
+  key         String
+  required    Boolean
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  @@id([entity, key])
+  @@map("field_rule")
 }

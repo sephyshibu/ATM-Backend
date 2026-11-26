@@ -44,8 +44,24 @@ export function readConfig() {
       smtpUser: env.SMTP_USER ?? "",
       smtpPass: env.SMTP_PASS ?? "",
     },
+    /** Dossier files. A private S3 bucket; Singapore (ap-southeast-1) by default, for PDPA. */
+    storage: {
+      bucket: (env.S3_BUCKET ?? "").trim(),
+      region: (env.S3_REGION ?? "ap-southeast-1").trim(),
+      /** Leave both empty on AWS (EC2, ECS, Lambda): the server's IAM role is used, with no keys to leak. */
+      accessKeyId: (env.S3_ACCESS_KEY_ID ?? "").trim(),
+      secretAccessKey: (env.S3_SECRET_ACCESS_KEY ?? "").trim(),
+      /** Only for an S3-compatible store in development (MinIO, LocalStack). */
+      endpoint: (env.S3_ENDPOINT ?? "").trim() || undefined,
+      forcePathStyle: env.S3_FORCE_PATH_STYLE === "true",
+      /** A KMS key for encryption at rest; empty = S3-managed keys (AES-256). */
+      kmsKeyId: (env.S3_KMS_KEY_ID ?? "").trim() || undefined,
+      /** Folder in the bucket, so several environments can share one bucket safely. */
+      prefix: (env.S3_PREFIX ?? appEnv).trim().replace(/^\/+|\/+$/g, ""),
+    },
   }
   if (production && (!config.google.clientId || !config.google.clientSecret)) throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required when APP_ENV=production.")
+  if (!!config.storage.accessKeyId !== !!config.storage.secretAccessKey) throw new Error("Set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or neither (to use the server's IAM role).")
   if (config.mail.transport === "smtp" && !config.mail.smtpHost) throw new Error("SMTP_HOST is required when MAIL_TRANSPORT=smtp.")
   return config
 }

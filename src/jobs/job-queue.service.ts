@@ -69,10 +69,13 @@ export class JobQueue implements OnModuleInit, OnModuleDestroy {
     return this.handlers.get(name)?.label ?? name
   }
 
-  /** Queues a job. With a uniqueKey that's already used, nothing is queued and the existing job is returned. */
-  async enqueue(name: string, payload: Record<string, unknown> = {}, opts: { runAt?: Date; uniqueKey?: string; maxAttempts?: number; createdById?: string | null } = {}) {
+  /**
+   * Queues a job. With a uniqueKey that's already used, nothing is queued and the existing job is returned. Pass
+   * `db` (a transaction) to queue it with a change, so the job exists only if the change commits.
+   */
+  async enqueue(name: string, payload: Record<string, unknown> = {}, opts: { runAt?: Date; uniqueKey?: string; maxAttempts?: number; createdById?: string | null; db?: Prisma.TransactionClient } = {}) {
     try {
-      return await this.prisma.job.create({
+      return await (opts.db ?? this.prisma).job.create({
         data: { name, payload: payload as Prisma.InputJsonValue, runAt: opts.runAt ?? new Date(), uniqueKey: opts.uniqueKey ?? null, maxAttempts: opts.maxAttempts ?? 5, createdById: opts.createdById ?? null },
       })
     } catch (e) {

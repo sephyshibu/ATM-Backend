@@ -4,7 +4,7 @@ import { CurrentUser, RequirePermissions } from "../common/decorators"
 import { requestIp, type AppRequest, type RequestUser } from "../common/request-user"
 import { JourneyService } from "./journey.service"
 import { GatesService } from "./gates.service"
-import { BulkMoveDto, EventDto, MoveDto, OpenLeadDto, OverrideDto, SetGateDto, SetPersonDto, UndoDto, UpdateGateDefinitionDto } from "./leads.dto"
+import { BulkMoveDto, CreateGateDefinitionDto, EventDto, MoveDto, OpenLeadDto, OverrideDto, SetGateDto, SetPersonDto, UndoDto, UpdateGateDefinitionDto } from "./leads.dto"
 
 // Leads: one brand in one journey, Register → Target → Contacted → Warm → Hot → SQL, with side lanes. Looking
 // needs "View brands and people". Each move checks its own permission in the journey engine (Target moves,
@@ -117,6 +117,12 @@ export class GatesController {
   @RequirePermissions("settings.view")
   list() {
     return this.gates.definitions()
+  }
+
+  @Post()
+  @RequirePermissions("settings.edit")
+  create(@Body() dto: CreateGateDefinitionDto, @CurrentUser() me: RequestUser, @Req() req: AppRequest) {
+    return this.gates.createDefinition(dto, me, requestIp(req))
   }
 
   @Patch(":code")

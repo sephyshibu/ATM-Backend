@@ -9,7 +9,7 @@ import "dotenv/config"
 import { PrismaClient } from "@prisma/client"
 
 import { BUILT_IN_ROLES, PERMISSIONS } from "../src/common/permissions"
-import { GATES, LIST_RELABELS, LISTS, SETTINGS } from "../src/common/settings-catalogue"
+import { FACTS, GATES, LIST_RELABELS, LISTS, SETTINGS } from "../src/common/settings-catalogue"
 import { hardenDatabase, syncPermissionCatalogue } from "../src/prisma/db-hardening"
 
 const prisma = new PrismaClient()
@@ -134,6 +134,15 @@ async function seedGates() {
   }
 }
 
+async function seedFacts() {
+  for (const [i, f] of FACTS.entries()) {
+    const has = await prisma.factDefinition.findUnique({ where: { key: f.key } })
+    if (has) continue
+    await prisma.factDefinition.create({ data: { key: f.key, label: f.label, groupCode: f.group, type: f.type, options: f.options ?? [], required: f.required, refreshDays: f.refreshDays, help: f.help, brandField: f.brandField ?? null, sortOrder: (i + 1) * 10 } })
+    console.log(`  fact field: ${f.label}`)
+  }
+}
+
 async function main() {
   console.log("Seeding ATM CRM…")
   await hardenDatabase(prisma)
@@ -144,6 +153,7 @@ async function main() {
   await seedLists()
   await relabelLists()
   await seedGates()
+  await seedFacts()
   await seedAdmins(roles)
   console.log("Done.")
 }

@@ -9,6 +9,7 @@ import { CsrfMiddleware } from "./common/csrf.middleware"
 import { SessionGuard } from "./common/guards/session.guard"
 import { HealthController } from "./health/health.controller"
 import { JobsModule } from "./jobs/jobs.module"
+import { KnowledgeModule } from "./knowledge/knowledge.module"
 import { LeadsModule } from "./leads/leads.module"
 import { MailModule } from "./mail/mail.module"
 import { PrismaModule } from "./prisma/prisma.module"
@@ -29,6 +30,7 @@ import { UsersModule } from "./users/users.module"
     UsersModule,
     RolesModule,
     SettingsModule,
+    KnowledgeModule,
     RecordsModule,
     LeadsModule,
   ],
